@@ -7,6 +7,15 @@ import re
 from typing import Iterable, List, Sequence, Tuple
 
 
+PAGINATION_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:"
+    r"第\s*\d+\s*页(?:\s*/\s*共\s*\d+\s*页)?"
+    r"|page\s*\d+(?:\s*(?:/|of)\s*\d+)?"
+    r"|slide\s*\d+(?:\s*(?:/|of)\s*\d+)?"
+    r")\s*$"
+)
+
+
 @dataclass
 class AlignmentIssue:
     page_index: int
@@ -18,6 +27,13 @@ class AlignmentIssue:
 class AlignmentResult:
     cursor: int
     issues: List[AlignmentIssue]
+
+
+def strip_pagination_noise(text: str) -> str:
+    """Remove standalone page-marker lines that should never reach TTS."""
+    if not text:
+        return ""
+    return PAGINATION_LINE_RE.sub("", text)
 
 
 def normalize_for_alignment(text: str) -> str:
@@ -38,6 +54,9 @@ def normalize_for_alignment(text: str) -> str:
     # Recover accidentally escaped Markdown control chars.
     t = re.sub(r"\\([#*_\-])", r"\1", t)
     t = re.sub(r"(?m)^\s*\\-\s*", "- ", t)
+
+    # Remove standalone pagination markers such as "- 第 3 页" / "Page 3".
+    t = strip_pagination_noise(t)
 
     # Remove standalone horizontal rules that are often noise in TTS.
     t = re.sub(r"(?m)^\s*(\*{3,}|-{3,})\s*$", "", t)

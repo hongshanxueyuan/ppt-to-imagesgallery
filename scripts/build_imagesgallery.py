@@ -22,6 +22,14 @@ from align_manuscript import normalize_for_alignment
 
 VERSION = "1.0"
 PROMPT_FULL_SPEECH_SESSION_PATH = SCRIPT_DIR.parent / "references" / "prompt_full_speech_session.md"
+PAGINATION_MARKER_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:"
+    r"第\s*\d+\s*页(?:\s*/\s*共\s*\d+\s*页)?"
+    r"|page\s*\d+(?:\s*(?:/|of)\s*\d+)?"
+    r"|slide\s*\d+(?:\s*(?:/|of)\s*\d+)?"
+    r")\s*$"
+)
+MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}\s+\S")
 
 
 def load_full_speech_session_prompt() -> str:
@@ -119,6 +127,60 @@ def run_batch_with_retries(
             )
 
     raise RuntimeError(f"batch slicing failed after {max_retries} attempt(s): {last_exc}")
+
+
+def _normalize_heading_for_match(text: str) -> str:
+    heading = re.sub(r"^\s*#{1,6}\s*", "", text or "").strip()
+    if not heading:
+        return ""
+    heading = re.sub(r"\.(?:md|markdown|txt|docx|pptx?|pdf)$", "", heading, flags=re.IGNORECASE)
+    heading = re.sub(r"[_\-\s]*(?:水印版|讲稿版|讲稿|文稿)$", "", heading)
+    heading = re.sub(r"^[（(]?\d+(?:\.\d+)+[)）]?\s*", "", heading)
+    heading = re.sub(r"[《》【】“”\"'`*_#\s:：\-—_]+", "", heading)
+    return heading.lower()
+
+
+def _headings_look_equivalent(doc_title: str, page_title: str, source_stem: str = "") -> bool:
+    doc_norm = _normalize_heading_for_match(doc_title)
+    page_norm = _normalize_heading_for_match(page_title)
+    stem_norm = _normalize_heading_for_match(source_stem)
+    if not doc_norm or not page_norm:
+        return False
+    if doc_norm == page_norm or doc_norm in page_norm or page_norm in doc_norm:
+        return True
+    if stem_norm and doc_norm == stem_norm and (page_norm == stem_norm or page_norm in stem_norm or stem_norm in page_norm):
+        return True
+    return False
+
+
+def strip_redundant_document_title(text: str, source_stem: str = "") -> str:
+    """Drop a file-level title before page 1 when page 1 repeats the same heading."""
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    first_page_line = next((idx for idx, line in enumerate(lines) if PAGINATION_MARKER_RE.match(line)), -1)
+    if first_page_line <= 0:
+        return text
+
+    pre_lines = lines[:first_page_line]
+    pre_nonempty = [line.strip() for line in pre_lines if line.strip()]
+    if len(pre_nonempty) != 1:
+        return text
+
+    doc_title = pre_nonempty[0]
+    if not MARKDOWN_HEADING_RE.match(doc_title):
+        return text
+
+    post_nonempty = [line.strip() for line in lines[first_page_line + 1 :] if line.strip()]
+    first_page_title = next((line for line in post_nonempty if MARKDOWN_HEADING_RE.match(line)), "")
+    if not first_page_title:
+        return text
+
+    if not _headings_look_equivalent(doc_title, first_page_title, source_stem=source_stem):
+        return text
+
+    return "\n".join(lines[first_page_line:]).lstrip()
 
 
 def resolve_bin(name: str) -> str:
@@ -460,11 +522,14 @@ def _read_docx_manuscript(path: Path) -> str:
 
 def read_manuscript(path: Path) -> str:
     suffix = path.suffix.lower()
+    raw = ""
     if suffix in {".txt", ".md", ".markdown"}:
-        return path.read_text(encoding="utf-8")
-    if suffix == ".docx":
-        return _read_docx_manuscript(path)
-    raise ValueError(f"unsupported speech type: {path.suffix}; expected .txt/.md/.docx")
+        raw = path.read_text(encoding="utf-8")
+    elif suffix == ".docx":
+        raw = _read_docx_manuscript(path)
+    else:
+        raise ValueError(f"unsupported speech type: {path.suffix}; expected .txt/.md/.docx")
+    return strip_redundant_document_title(raw, source_stem=path.stem)
 
 
 def build_imagesgallery(args: argparse.Namespace) -> Dict[str, object]:
