@@ -4,11 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Sequence
+
+from align_manuscript import strip_pagination_noise
+
+
+TABLE_ALIGN_RE = re.compile(r"^[:\-\s]+$")
 
 
 def resolve_bin(name: str) -> str:
@@ -82,6 +88,51 @@ def to_rel_url(target: str, base_dir: Path) -> str:
         rel = os.path.relpath(str(p), str(base_dir))
         return rel.replace("\\", "/")
     return str(p).replace("\\", "/")
+
+
+def clean_speech_for_tts(text: str) -> str:
+    cleaned = strip_pagination_noise(text or "")
+    lines = []
+    for raw_line in cleaned.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            lines.append("")
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if cells and not all(TABLE_ALIGN_RE.fullmatch(cell or "") for cell in cells):
+                head, rest = cells[0], [cell for cell in cells[1:] if cell]
+                if head and rest:
+                    lines.append(f"{head}：{'；'.join(rest)}")
+                elif rest:
+                    lines.append("；".join(rest))
+                elif head:
+                    lines.append(head)
+            continue
+
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
+        line = re.sub(r"^\s*[-*]\s+", "", line)
+        line = re.sub(r"^\s*\d+\.\s+", "", line)
+        line = re.sub(r"^\s*\d+、\s*", "", line)
+        line = re.sub(r"^\s*>\s*", "", line)
+        line = re.sub(r"\\([#*_`\-])", r"\1", line)
+        line = re.sub(r"(?<!\*)\*\*(.+?)\*\*(?!\*)", r"\1", line)
+        line = re.sub(r"(?<!\*)\*(.+?)\*(?!\*)", r"\1", line)
+        line = re.sub(r"(?<!_)_(.+?)_(?!_)", r"\1", line)
+        line = re.sub(r"`([^`]+)`", r"\1", line)
+        line = re.sub(r"\s{2,}", " ", line).strip()
+        if line:
+            lines.append(line)
+
+    cleaned = "\n".join(lines)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def normalize_subtitle_for_display(text: str) -> str:
+    return strip_pagination_noise(text or "").strip()
 
 
 def build_preview_html(manifest: Dict[str, object], manifest_path: Path) -> Path:
@@ -165,7 +216,10 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
     segment_rows: List[Dict[str, object]] = []
     for item in sorted_items:
         page_number = int(item.get("page_number", item.get("page")))
-        speech = str(item.get("speech", item.get("subtitle", ""))).strip()
+        subtitle = normalize_subtitle_for_display(str(item.get("speech", item.get("subtitle", ""))))
+        speech = clean_speech_for_tts(subtitle)
+        if not subtitle:
+            raise ValueError(f"empty subtitle on page {page_number}")
         if not speech:
             raise ValueError(f"empty speech on page {page_number}")
 
@@ -204,7 +258,8 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
             {
                 "page_number": page_number,
                 "image": item.get("image"),
-                "speech": speech,
+                "speech": subtitle,
+                "tts_text": speech,
                 "segment_audio": str(seg_path),
                 "duration_seconds": round(duration, 3),
             }

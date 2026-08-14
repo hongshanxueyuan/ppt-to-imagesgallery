@@ -11,6 +11,7 @@ from align_manuscript import (  # noqa: E402
     is_substantive_gap,
     normalize_for_alignment,
     scan_pages_in_manuscript,
+    strip_pagination_noise,
     strict_consume_pages,
 )
 
@@ -25,12 +26,24 @@ class TestAlignManuscript(unittest.TestCase):
         self.assertNotIn("<", normalized)
         self.assertNotIn("&nbsp;", normalized)
 
+    def test_strip_pagination_noise_removes_standalone_page_lines(self):
+        raw = "- 第 1 页\n\n## 核心机制\n\n正文内容"
+        cleaned = strip_pagination_noise(raw)
+        self.assertNotIn("第 1 页", cleaned)
+        self.assertIn("## 核心机制", cleaned)
+
     def test_scan_pages_happy_path(self):
         manuscript = "## 一\n\n第一页内容。\n\n## 二\n\n第二页内容。"
         pages = ["## 一\n\n第一页内容。", "## 二\n\n第二页内容。"]
         result = scan_pages_in_manuscript(manuscript, pages)
         self.assertGreater(result.cursor, 0)
         self.assertEqual([], result.issues)
+
+    def test_strict_consume_allows_manuscript_page_markers_to_be_ignored(self):
+        manuscript = "- 第 1 页\n\n## 一\n\n第一页内容。\n\n- 第 2 页\n\n## 二\n\n第二页内容。"
+        pages = ["## 一\n\n第一页内容。", "## 二\n\n第二页内容。"]
+        result = strict_consume_pages(manuscript, pages)
+        self.assertGreater(result.cursor, 0)
 
     def test_strict_consume_detects_gap(self):
         manuscript = "## 一\n\n第一页内容。\n\n## 二\n\n第二页内容。"
