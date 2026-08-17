@@ -377,6 +377,9 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
         },
         "items": rewritten_items,
     }
+    for optional_key in ("risk_report", "risk_summary"):
+        if optional_key in data:
+            rewritten_manifest[optional_key] = data[optional_key]
     manifest_path.write_text(json.dumps(rewritten_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     preview_html_path = build_preview_html(rewritten_manifest, manifest_path)
     timeline["preview_html"] = str(preview_html_path)
