@@ -15,6 +15,9 @@ from align_manuscript import strip_pagination_noise
 
 
 TABLE_ALIGN_RE = re.compile(r"^[:\-\s]+$")
+DEFAULT_TTS_VOICE = "longxiaochun_v2"
+DEFAULT_TTS_MODEL = "cosyvoice-v2"
+DEFAULT_TTS_RATE = 1.1
 
 
 def resolve_bin(name: str) -> str:
@@ -172,7 +175,7 @@ def build_preview_html(manifest: Dict[str, object], manifest_path: Path) -> Path
     payload = {
         "items": normalized_items,
         "audio": {
-            "rate": audio.get("rate", 1.0),
+            "rate": audio.get("rate", DEFAULT_TTS_RATE),
         },
     }
     title = f"{Path(str(manifest.get('source_ppt', 'PPT'))).stem} - 有声预览"
@@ -212,6 +215,9 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
     bl_bin = resolve_bin("bl")
     ffmpeg_bin = resolve_bin("ffmpeg")
     ffprobe_bin = resolve_bin("ffprobe")
+    voice = DEFAULT_TTS_VOICE if not args.voice else str(args.voice)
+    model = DEFAULT_TTS_MODEL if not args.model else str(args.model)
+    rate = DEFAULT_TTS_RATE if args.rate is None else float(args.rate)
 
     segment_rows: List[Dict[str, object]] = []
     for item in sorted_items:
@@ -232,9 +238,11 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
                 "speech",
                 "synthesize",
                 "--voice",
-                args.voice,
+                voice,
+                "--model",
+                model,
                 "--rate",
-                str(args.rate),
+                str(rate),
                 "--text-file",
                 str(text_file),
                 "--format",
@@ -245,8 +253,6 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
                 "--output",
                 "json",
             ]
-            if args.model:
-                cmd.extend(["--model", args.model])
             if args.language:
                 cmd.extend(["--language", args.language])
             run_cmd(cmd)
@@ -332,9 +338,9 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
     timeline = {
         "version": "1.0",
         "source_manifest": str(manifest_path),
-        "voice": args.voice,
-        "rate": float(args.rate),
-        "model": args.model or "",
+        "voice": voice,
+        "rate": rate,
+        "model": model,
         "gap_seconds_between_segments": gap_seconds,
         "final_audio": str(final_audio),
         "total_duration_seconds": round(cursor, 3),
@@ -367,9 +373,9 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
         "source_ppt": data.get("source_ppt", ""),
         "source_speech": data.get("source_speech", ""),
         "audio": {
-            "voice": args.voice,
-            "rate": float(args.rate),
-            "model": args.model or "",
+            "voice": voice,
+            "rate": rate,
+            "model": model,
             "gap_seconds_between_segments": gap_seconds,
             "full_audio": str(final_audio),
             "total_duration_seconds": round(cursor, 3),
@@ -390,9 +396,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Synthesize per-page speech and merge into one MP3 with timestamps.")
     p.add_argument("--manifest", required=True, help="path to imagesgallery.json")
     p.add_argument("--out-dir", default="", help="output directory for segment and merged audios")
-    p.add_argument("--voice", default="longxiaochun_v3", help="TTS voice id for bl speech synthesize")
-    p.add_argument("--rate", type=float, default=1.1, help="speech rate for bl speech synthesize, e.g. 1.1")
-    p.add_argument("--model", default="", help="optional TTS model id")
+    p.add_argument("--voice", default=DEFAULT_TTS_VOICE, help="TTS voice id for bl speech synthesize")
+    p.add_argument("--rate", type=float, default=DEFAULT_TTS_RATE, help="speech rate for bl speech synthesize, e.g. 1.1")
+    p.add_argument("--model", default=DEFAULT_TTS_MODEL, help="TTS model id for bl speech synthesize")
     p.add_argument("--language", default="", help="optional language hint, e.g. zh")
     p.add_argument("--gap-seconds", type=float, default=1.0, help="silence gap inserted between segments")
     p.add_argument("--final-name", default="full_speech.mp3", help="merged audio filename")
