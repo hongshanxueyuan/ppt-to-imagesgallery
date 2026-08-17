@@ -15,8 +15,11 @@ if str(SCRIPT_DIR) not in sys.path:
 from build_imagesgallery import (  # noqa: E402
     MANUSCRIPT_PREPROCESS_VERSION,
     _extract_json_text,
+    _build_image_name_prefix,
+    _build_page_image_name,
     build_imagesgallery,
     clean_paginated_markdown,
+    convert_ppt_to_images,
     is_paginated_markdown,
     load_full_speech_session_prompt,
     parse_bl_omni_stdout,
@@ -173,6 +176,51 @@ class TestBuildImagesGalleryHelpers(unittest.TestCase):
         self.assertTrue(reused.was_preprocessed)
         self.assertEqual("# cached\n\n复用后的内容\n", reused.text)
 
+    def test_build_page_image_name_uses_prefix_and_timestamp_suffix(self):
+        prefix = _build_image_name_prefix("1.3 流程智能体与普通AI助手的区别_水印版")
+        self.assertRegex(prefix, r"^[a-z0-9-]+$")
+        self.assertRegex(prefix, r"[0-9a-f]{8}$")
+        self.assertEqual(
+            f"{prefix}__page-012__20260817-163045-123.png",
+            _build_page_image_name(prefix, 12, "20260817-163045-123"),
+        )
+
+    def test_convert_ppt_to_images_writes_unique_output_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            ppt_path = tmp_path / "sample.pptx"
+            images_dir = tmp_path / "images"
+            ppt_path.write_bytes(b"fake-ppt")
+
+            def fake_run(cmd, cwd=None):
+                if "--convert-to" in cmd:
+                    out_dir = Path(cmd[cmd.index("--outdir") + 1])
+                    (out_dir / "sample.pdf").write_bytes(b"%PDF-1.4")
+                elif cmd and cmd[0] == "pdftoppm":
+                    prefix = Path(cmd[-1])
+                    for idx in range(1, 3):
+                        (prefix.parent / f"{prefix.name}-{idx}.png").write_bytes(b"fake-slide")
+                else:
+                    raise AssertionError(f"unexpected cmd: {cmd}")
+
+            with patch("build_imagesgallery.run_cmd", side_effect=fake_run):
+                images = convert_ppt_to_images(
+                    ppt_path,
+                    images_dir,
+                    soffice_bin="soffice",
+                    pdftoppm_bin="pdftoppm",
+                    image_name_prefix="sample-abc12345",
+                    image_name_timestamp="20260817-163045-123",
+                )
+
+        self.assertEqual(
+            [
+                "sample-abc12345__page-001__20260817-163045-123.png",
+                "sample-abc12345__page-002__20260817-163045-123.png",
+            ],
+            [path.name for path in images],
+        )
+
     def test_build_imagesgallery_uses_cleaned_markdown_as_source_speech(self):
         raw = """# 示例标题
 
@@ -196,8 +244,15 @@ class TestBuildImagesGalleryHelpers(unittest.TestCase):
             ppt_path.write_bytes(b"fake-ppt")
             speech_path.write_text(raw, encoding="utf-8")
 
-            def fake_convert(_ppt_path, images_dir, soffice_bin=None, pdftoppm_bin=None):
-                image_path = images_dir / "page-001.png"
+            def fake_convert(
+                _ppt_path,
+                images_dir,
+                soffice_bin=None,
+                pdftoppm_bin=None,
+                image_name_prefix="",
+                image_name_timestamp="",
+            ):
+                image_path = images_dir / f"{image_name_prefix}__page-001__{image_name_timestamp}.png"
                 image_path.write_bytes(b"fake-image")
                 return [image_path]
 
@@ -212,6 +267,7 @@ class TestBuildImagesGalleryHelpers(unittest.TestCase):
             self.assertEqual(str(cleaned_path.resolve()), manifest["source_speech"])
             self.assertTrue(cleaned_path.exists())
             self.assertNotIn("第 1 页", cleaned_path.read_text(encoding="utf-8"))
+            self.assertRegex(manifest["items"][0]["image"], r"images/.+__page-001__\d{8}-\d{6}-\d{3}\.png")
 
     def test_clean_paginated_markdown_removes_page_markers_and_duplicate_cover_title(self):
         raw = """# 文件标题
@@ -294,10 +350,17 @@ Page 2
             ppt_path.write_bytes(b"fake-ppt")
             speech_path.write_text(raw, encoding="utf-8")
 
-            def fake_convert(_ppt_path, images_dir, soffice_bin=None, pdftoppm_bin=None):
+            def fake_convert(
+                _ppt_path,
+                images_dir,
+                soffice_bin=None,
+                pdftoppm_bin=None,
+                image_name_prefix="",
+                image_name_timestamp="",
+            ):
                 image_paths = []
                 for idx in range(1, 5):
-                    image_path = images_dir / f"page-{idx:03d}.png"
+                    image_path = images_dir / f"{image_name_prefix}__page-{idx:03d}__{image_name_timestamp}.png"
                     image_path.write_bytes(b"fake-image")
                     image_paths.append(image_path)
                 return image_paths

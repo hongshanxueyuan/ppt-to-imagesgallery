@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import datetime
+import hashlib
 import json
 import re
 import shutil
@@ -576,23 +578,48 @@ def _sorted_page_images(paths: Iterable[Path]) -> List[Path]:
     return sorted(paths, key=key)
 
 
-def _export_ppt_via_powerpoint_com(ppt_path: Path, images_dir: Path) -> List[Path]:
+def _build_image_name_prefix(source_stem: str) -> str:
+    stem = (source_stem or "").strip()
+    digest = hashlib.sha1(stem.encode("utf-8")).hexdigest()[:8] if stem else "00000000"
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", stem).strip("-").lower()
+    slug = slug[:40]
+    return f"{slug}-{digest}" if slug else f"deck-{digest}"
+
+
+def _build_image_name_timestamp() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+
+
+def _build_page_image_name(image_name_prefix: str, page_number: int, image_name_timestamp: str) -> str:
+    return f"{image_name_prefix}__page-{page_number:03d}__{image_name_timestamp}.png"
+
+
+def _export_ppt_via_powerpoint_com(
+    ppt_path: Path,
+    images_dir: Path,
+    image_name_prefix: str,
+    image_name_timestamp: str,
+) -> List[Path]:
     """Windows fallback: export slides directly via PowerPoint COM when soffice is unavailable."""
     if not sys.platform.startswith("win"):
         raise RuntimeError("PowerPoint COM export is only supported on Windows")
 
     ppt_escaped = str(ppt_path).replace("'", "''")
     out_escaped = str(images_dir).replace("'", "''")
+    prefix_escaped = image_name_prefix.replace("'", "''")
+    timestamp_escaped = image_name_timestamp.replace("'", "''")
     ps_script = f"""
 $ErrorActionPreference='Stop'
 $ppt='{ppt_escaped}'
 $out='{out_escaped}'
+$prefix='{prefix_escaped}'
+$stamp='{timestamp_escaped}'
 $app = New-Object -ComObject PowerPoint.Application
 $pres = $app.Presentations.Open($ppt, $false, $false, $false)
 try {{
   $count = $pres.Slides.Count
   for ($i = 1; $i -le $count; $i++) {{
-    $dest = Join-Path $out ("page-{{0:D3}}.png" -f $i)
+    $dest = Join-Path $out ("{0}__page-{1:D3}__{2}.png" -f $prefix, $i, $stamp)
     $pres.Slides.Item($i).Export($dest, "PNG")
   }}
   Write-Output $count
@@ -601,9 +628,17 @@ try {{
   $app.Quit()
 }}
 """
-    run_cmd(["powershell", "-NoProfile", "-Command", ps_script])
-    images = _sorted_page_images(images_dir.glob("page-*.png"))
-    if not images:
+    result = run_cmd(["powershell", "-NoProfile", "-Command", ps_script])
+    count_text = (result.stdout or "").strip().splitlines()
+    if not count_text:
+        raise RuntimeError("PowerPoint COM export did not report slide count")
+    try:
+        slide_count = int(count_text[-1].strip())
+    except ValueError as exc:
+        raise RuntimeError(f"PowerPoint COM export returned invalid slide count: {result.stdout}") from exc
+
+    images = [images_dir / _build_page_image_name(image_name_prefix, idx, image_name_timestamp) for idx in range(1, slide_count + 1)]
+    if not images or any(not path.exists() for path in images):
         raise RuntimeError("PowerPoint COM export produced no PNG files")
     return images
 
@@ -613,6 +648,8 @@ def convert_ppt_to_images(
     images_dir: Path,
     soffice_bin: str | None,
     pdftoppm_bin: str | None,
+    image_name_prefix: str,
+    image_name_timestamp: str,
 ) -> List[Path]:
     """Convert PPT/PDF to sequential PNG files under images_dir."""
     suffix = ppt_path.suffix.lower()
@@ -628,7 +665,12 @@ def convert_ppt_to_images(
         else:
             if not soffice_bin:
                 # Fallback for Windows ops machines without LibreOffice.
-                return _export_ppt_via_powerpoint_com(ppt_path, images_dir)
+                return _export_ppt_via_powerpoint_com(
+                    ppt_path,
+                    images_dir,
+                    image_name_prefix=image_name_prefix,
+                    image_name_timestamp=image_name_timestamp,
+                )
             run_cmd([
                 soffice_bin,
                 "--headless",
@@ -658,7 +700,7 @@ def convert_ppt_to_images(
 
         output_images: List[Path] = []
         for idx, raw in enumerate(raw_images, start=1):
-            out_name = f"page-{idx:03d}.png"
+            out_name = _build_page_image_name(image_name_prefix, idx, image_name_timestamp)
             out_path = images_dir / out_name
             shutil.copy2(raw, out_path)
             output_images.append(out_path)
@@ -905,7 +947,16 @@ def build_imagesgallery(args: argparse.Namespace) -> Dict[str, object]:
             raise
     need_pdftoppm = (ppt_path.suffix.lower() == ".pdf") or (soffice_bin is not None)
     pdftoppm_bin = resolve_bin("pdftoppm") if need_pdftoppm else None
-    image_abs_paths = convert_ppt_to_images(ppt_path, images_dir, soffice_bin=soffice_bin, pdftoppm_bin=pdftoppm_bin)
+    image_name_prefix = _build_image_name_prefix(ppt_path.stem)
+    image_name_timestamp = _build_image_name_timestamp()
+    image_abs_paths = convert_ppt_to_images(
+        ppt_path,
+        images_dir,
+        soffice_bin=soffice_bin,
+        pdftoppm_bin=pdftoppm_bin,
+        image_name_prefix=image_name_prefix,
+        image_name_timestamp=image_name_timestamp,
+    )
 
     prepared_manuscript = prepare_session_manuscript(
         speech_path,
