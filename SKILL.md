@@ -68,7 +68,7 @@ python3 scripts/build_imagesgallery.py \
 
 输出目录：
 
-- `/path/to/output/<ppt_name>/imagesgallery/images/page-001.png` ...
+- `/path/to/output/<ppt_name>/imagesgallery/images/<deck-prefix>__page-001__<timestamp>.png` ...
 - `/path/to/output/<ppt_name>/imagesgallery/imagesgallery.json`（dry-run 阶段是占位 `speech`，后续要在会话里覆写）
 
 ## 工作流
@@ -199,11 +199,18 @@ python3 scripts/build_imagesgallery.py \
 
 1. 先完整阅读 `references/prompt_full_speech_session.md`，严格按其中约束发起请求。
 2. 如果 `imagesgallery.json` 的 `source_speech` 指向 `_cache/manuscript` 下的清洗后 Markdown，就使用这份清洗后文件，而不是原始分页稿。
-3. 按顺序附上所有页面图片（`page-001.png ... page-NNN.png`）。
+3. 按顺序附上所有页面图片（文件名通常形如 `<deck-prefix>__page-001__<timestamp>.png`）。
 4. 在同一个请求中提供整篇讲稿，不要分批喂“剩余尾稿”。
 5. 要求模型只返回严格 JSON（不要解释文字，不要代码块）：
    - `pages: [{page_number, speech}]`
 6. 返回结果后，用 `scripts/align_manuscript.py` 做后验校验，再写回最终 manifest。
+
+图片命名规则：
+
+- `imagesgallery/images/*.png` 不再使用通用的 `page-001.png` / `page-002.png`。
+- 默认命名为：`<deck-prefix>__page-001__<timestamp>.png`
+- 其中 `deck-prefix` 来自当前 PPT 文件名的稳定前缀，`timestamp` 来自本次构建时间。
+- 这样即使多个 deck 连续生成并推送到同一门课里，Studio 侧拿到的上传文件名也不会互相覆盖。
 
 ## 批量模式
 
@@ -302,7 +309,7 @@ python scripts/plan_batch_jobs.py \
 - 绝不要在同一个子 agent 会话里读取或查看两个不同 deck 的图片，即使它们只是顺序处理也不行。
 - 一个子 agent 只要已经看过某个 deck 的截图/讲稿，就**不要**把它复用到另一个 deck；要重新启动一个新的子 agent，确保多模态上下文是干净的。
 - `最多 3 agent` 指的是**同时活跃**的本地生成子 agent 上限，不是整批任务总共最多只能处理 3 个 deck。
-- 附图或读取图片时，必须使用完整绝对路径，例如 `...\\deck-a\\imagesgallery\\images\\page-001.png`，不要只写 `page-001.png`
+- 附图或读取图片时，必须使用完整绝对路径，例如 `...\\deck-a\\imagesgallery\\images\\deck-a-abc12345__page-001__20260817-163045-123.png`，不要只写文件尾名
 - 开始下一个 deck 之前，要再次明确重述当前 deck 的绝对路径，让会话上下文围绕这个 deck 重新聚焦
 
 批量 Studio 路由规则：
