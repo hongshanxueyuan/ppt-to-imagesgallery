@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import re
 import shutil
@@ -17,10 +18,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from align_manuscript import normalize_for_alignment
+from align_manuscript import normalize_for_alignment, strip_pagination_noise
 
 
 VERSION = "1.0"
+MANUSCRIPT_PREPROCESS_VERSION = "2026-08-17-risk-report-v1"
 PROMPT_FULL_SPEECH_SESSION_PATH = SCRIPT_DIR.parent / "references" / "prompt_full_speech_session.md"
 PAGINATION_MARKER_RE = re.compile(
     r"(?im)^\s*(?:[-*]\s*)?(?:"
@@ -30,6 +32,16 @@ PAGINATION_MARKER_RE = re.compile(
     r")\s*$"
 )
 MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}\s+\S")
+HORIZONTAL_RULE_RE = re.compile(r"^\s*(?:\*{3,}|-{3,})\s*$")
+RISK_SEVERITY_ORDER = {"info": 0, "warning": 1, "error": 2}
+
+
+@dataclass(frozen=True)
+class PreparedManuscript:
+    source_path: Path
+    text: str
+    was_preprocessed: bool
+    risks: tuple[Dict[str, Any], ...] = ()
 
 
 def load_full_speech_session_prompt() -> str:
@@ -181,6 +193,340 @@ def strip_redundant_document_title(text: str, source_stem: str = "") -> str:
         return text
 
     return "\n".join(lines[first_page_line:]).lstrip()
+
+
+def _extract_pagination_number(line: str) -> int | None:
+    if not PAGINATION_MARKER_RE.match(line or ""):
+        return None
+    match = re.search(r"\d+", line)
+    if not match:
+        return None
+    return int(match.group(0))
+
+
+def is_paginated_markdown(text: str) -> bool:
+    if not text:
+        return False
+
+    lines = text.splitlines()
+    pagination_hits = [
+        (idx, page_no)
+        for idx, line in enumerate(lines)
+        if (page_no := _extract_pagination_number(line)) is not None
+    ]
+    if len(pagination_hits) >= 2:
+        numbers = [page_no for _idx, page_no in pagination_hits]
+        return all(right > left for left, right in zip(numbers, numbers[1:]))
+    if len(pagination_hits) != 1:
+        return False
+
+    marker_idx, first_number = pagination_hits[0]
+    if first_number != 1:
+        return False
+
+    next_nonempty = next((line.strip() for line in lines[marker_idx + 1 :] if line.strip()), "")
+    return bool(next_nonempty and MARKDOWN_HEADING_RE.match(next_nonempty))
+
+
+def _significant_lines_after(lines: Sequence[str], marker_idx: int, limit: int = 3) -> List[str]:
+    excerpt: List[str] = []
+    for line in lines[marker_idx + 1 :]:
+        stripped = line.strip()
+        if not stripped or HORIZONTAL_RULE_RE.match(stripped):
+            continue
+        excerpt.append(stripped)
+        if len(excerpt) >= limit:
+            break
+    return excerpt
+
+
+def _normalize_duplicate_match_line(line: str) -> str:
+    deheaded = re.sub(r"^\s*#{1,6}\s*", "", line or "").strip()
+    normalized = normalize_for_alignment(deheaded)
+    return re.sub(r"\s+", "", normalized)
+
+
+def detect_duplicate_tail_restart(text: str, source_stem: str = "") -> Dict[str, Any] | None:
+    if not text:
+        return None
+
+    lines = text.splitlines()
+    pagination_hits = [
+        (idx, page_no)
+        for idx, line in enumerate(lines)
+        if (page_no := _extract_pagination_number(line)) is not None
+    ]
+    if len(pagination_hits) < 2:
+        return None
+
+    first_marker_idx, _first_page_no = pagination_hits[0]
+    anchor_excerpt = _significant_lines_after(lines, first_marker_idx, limit=3)
+    anchor_heading = next((line for line in anchor_excerpt if MARKDOWN_HEADING_RE.match(line)), "")
+    anchor_body = [_normalize_duplicate_match_line(line) for line in anchor_excerpt if not MARKDOWN_HEADING_RE.match(line)]
+    anchor_body = [line for line in anchor_body if line]
+    if not anchor_heading or not anchor_body:
+        return None
+
+    for marker_idx, page_no in pagination_hits[1:]:
+        candidate_excerpt = _significant_lines_after(lines, marker_idx, limit=3)
+        candidate_heading = next((line for line in candidate_excerpt if MARKDOWN_HEADING_RE.match(line)), "")
+        if not candidate_heading or not _headings_look_equivalent(anchor_heading, candidate_heading, source_stem=source_stem):
+            continue
+
+        candidate_body = [_normalize_duplicate_match_line(line) for line in candidate_excerpt if not MARKDOWN_HEADING_RE.match(line)]
+        candidate_body = [line for line in candidate_body if line]
+        if not candidate_body:
+            continue
+
+        matched_body_lines = 0
+        for left, right in zip(anchor_body, candidate_body):
+            if left == right or left.startswith(right) or right.startswith(left):
+                matched_body_lines += 1
+
+        if matched_body_lines < 1:
+            continue
+
+        return {
+            "marker_line_index": marker_idx,
+            "marker_line_number": marker_idx + 1,
+            "marker_page_number": page_no,
+            "heading": candidate_heading,
+            "excerpt": candidate_excerpt,
+            "removed_line_count": len(lines[marker_idx:]),
+        }
+    return None
+
+
+def _build_duplicate_tail_removed_risk(finding: Dict[str, Any]) -> Dict[str, Any]:
+    page_no = finding["marker_page_number"]
+    heading = finding.get("heading", "")
+    line_no = finding["marker_line_number"]
+    return {
+        "code": "manuscript_duplicate_tail_removed",
+        "severity": "warning",
+        "title": "原始 Markdown 在后段重复起稿",
+        "summary": (
+            f"原始分页 Markdown 在第 {page_no} 页附近又重新出现了一级标题和开场正文。"
+            "清洗稿已经自动裁掉这段重复尾稿，但这通常说明源讲稿本身有异常。"
+        ),
+        "evidence": {
+            "marker_page_number": page_no,
+            "marker_line_number": line_no,
+            "heading": heading,
+            "excerpt": finding.get("excerpt", []),
+            "removed_line_count": finding.get("removed_line_count", 0),
+        },
+        "recommended_action": (
+            "请抽查原始 Markdown、PPT 最后几页，以及最终字幕/音频是否一致。"
+            "如果末尾页仍有讲稿错位，优先修正原始讲稿后再重跑。"
+        ),
+    }
+
+
+def _build_page_marker_slide_count_risk(text: str, rendered_slide_count: int) -> Dict[str, Any] | None:
+    if not text or rendered_slide_count <= 0:
+        return None
+
+    page_numbers = [
+        page_no
+        for line in text.splitlines()
+        if (page_no := _extract_pagination_number(line)) is not None
+    ]
+    if len(page_numbers) < 2:
+        return None
+
+    unique_numbers = sorted(set(page_numbers))
+    max_marker = max(unique_numbers)
+    if max_marker == rendered_slide_count and len(unique_numbers) == rendered_slide_count:
+        return None
+
+    return {
+        "code": "page_markers_slide_count_mismatch",
+        "severity": "warning",
+        "title": "稿件分页锚点与 PPT 页数不一致",
+        "summary": (
+            f"原始稿件里的分页锚点最高到第 {max_marker} 页（共识别到 {len(unique_numbers)} 个页码标记），"
+            f"但当前 PPT 渲染出了 {rendered_slide_count} 页。"
+            "这可能是讲稿合并/拆分页，也可能是原始 Markdown 生成异常。"
+        ),
+        "evidence": {
+            "marker_pages": unique_numbers,
+            "max_marker_page": max_marker,
+            "marker_count": len(unique_numbers),
+            "rendered_slide_count": rendered_slide_count,
+        },
+        "recommended_action": (
+            "请关注最终字幕、页间切分和音频节奏是否与 PPT 对应；"
+            "如果最后几页明显不匹配，优先回看原始讲稿来源。"
+        ),
+    }
+
+
+def preprocess_paginated_markdown(
+    text: str,
+    source_stem: str = "",
+    rendered_slide_count: int | None = None,
+) -> tuple[str, List[Dict[str, Any]]]:
+    if not text:
+        return "", []
+
+    risks: List[Dict[str, Any]] = []
+    if rendered_slide_count is not None:
+        mismatch_risk = _build_page_marker_slide_count_risk(text, rendered_slide_count)
+        if mismatch_risk is not None:
+            risks.append(mismatch_risk)
+
+    cleaned = strip_redundant_document_title(text, source_stem=source_stem)
+    duplicate_tail = detect_duplicate_tail_restart(cleaned, source_stem=source_stem)
+    if duplicate_tail is not None:
+        cleaned_lines = cleaned.splitlines()
+        cleaned = "\n".join(cleaned_lines[: duplicate_tail["marker_line_index"]]).rstrip()
+        risks.append(_build_duplicate_tail_removed_risk(duplicate_tail))
+
+    cleaned = strip_pagination_noise(cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip(), risks
+
+
+def clean_paginated_markdown(text: str, source_stem: str = "") -> str:
+    cleaned, _risks = preprocess_paginated_markdown(text, source_stem=source_stem)
+    return cleaned
+
+
+def _cached_clean_manuscript_path(deck_root: Path, speech_path: Path) -> Path:
+    cleaned_suffix = speech_path.suffix.lower() or ".md"
+    return deck_root / "_cache" / "manuscript" / f"{speech_path.stem}.cleaned{cleaned_suffix}"
+
+
+def _cached_clean_manuscript_meta_path(deck_root: Path, speech_path: Path) -> Path:
+    return deck_root / "_cache" / "manuscript" / f"{speech_path.stem}.cleaned.meta.json"
+
+
+def _read_cached_clean_manuscript(cleaned_path: Path, meta_path: Path, source_path: Path) -> str | None:
+    if not cleaned_path.exists() or cleaned_path.stat().st_mtime < source_path.stat().st_mtime:
+        return None
+    if not meta_path.exists():
+        return None
+
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    if meta.get("preprocess_version") != MANUSCRIPT_PREPROCESS_VERSION:
+        return None
+
+    cached = read_manuscript(cleaned_path)
+    return cached if cached.strip() else None
+
+
+def _write_cached_clean_manuscript(
+    cleaned_path: Path,
+    meta_path: Path,
+    cleaned_text: str,
+    source_path: Path,
+    risks: Sequence[Dict[str, Any]],
+) -> None:
+    cleaned_path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned_path.write_text(cleaned_text.rstrip() + "\n", encoding="utf-8")
+    meta_path.write_text(
+        json.dumps(
+            {
+                "preprocess_version": MANUSCRIPT_PREPROCESS_VERSION,
+                "source_path": str(source_path),
+                "risk_codes": [str(risk.get("code", "")) for risk in risks],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _risk_summary(risks: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    highest = "info"
+    if risks:
+        highest = max(risks, key=lambda risk: RISK_SEVERITY_ORDER.get(str(risk.get("severity", "info")), 0)).get(
+            "severity",
+            "warning",
+        )
+    return {
+        "risk_count": len(risks),
+        "highest_severity": highest,
+        "requires_manual_review": bool(risks),
+    }
+
+
+def _risk_report_path(deck_root: Path) -> Path:
+    return deck_root / "imagesgallery-risk-report.json"
+
+
+def _write_risk_report(
+    deck_root: Path,
+    ppt_path: Path,
+    speech_path: Path,
+    prepared_manuscript: PreparedManuscript,
+    rendered_slide_count: int,
+) -> tuple[Path | None, Dict[str, Any] | None]:
+    report_path = _risk_report_path(deck_root)
+    if not prepared_manuscript.risks:
+        if report_path.exists():
+            report_path.unlink()
+        return None, None
+
+    summary = _risk_summary(prepared_manuscript.risks)
+    payload = {
+        "version": VERSION,
+        "report_type": "imagesgallery_manuscript_risk_report",
+        "source_ppt": str(ppt_path),
+        "source_speech": str(speech_path),
+        "prepared_source_speech": str(prepared_manuscript.source_path),
+        "rendered_slide_count": rendered_slide_count,
+        "summary": summary,
+        "risks": list(prepared_manuscript.risks),
+    }
+    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report_path, summary
+
+
+def prepare_session_manuscript(
+    path: Path,
+    deck_root: Path,
+    rendered_slide_count: int | None = None,
+) -> PreparedManuscript:
+    raw = read_manuscript(path)
+    if path.suffix.lower() not in {".md", ".markdown"}:
+        return PreparedManuscript(source_path=path, text=raw, was_preprocessed=False)
+    if not is_paginated_markdown(raw):
+        return PreparedManuscript(source_path=path, text=raw, was_preprocessed=False)
+
+    cleaned, risks = preprocess_paginated_markdown(
+        raw,
+        source_stem=path.stem,
+        rendered_slide_count=rendered_slide_count,
+    )
+    if not cleaned.strip():
+        raise ValueError(f"preprocessed markdown became empty: {path}")
+
+    cleaned_path = _cached_clean_manuscript_path(deck_root, path)
+    meta_path = _cached_clean_manuscript_meta_path(deck_root, path)
+    cached = _read_cached_clean_manuscript(cleaned_path, meta_path, path)
+    if cached is not None:
+        return PreparedManuscript(
+            source_path=cleaned_path,
+            text=cached,
+            was_preprocessed=True,
+            risks=tuple(risks),
+        )
+
+    _write_cached_clean_manuscript(cleaned_path, meta_path, cleaned, path, risks)
+    return PreparedManuscript(
+        source_path=cleaned_path,
+        text=cleaned,
+        was_preprocessed=True,
+        risks=tuple(risks),
+    )
 
 
 def resolve_bin(name: str) -> str:
@@ -529,7 +875,7 @@ def read_manuscript(path: Path) -> str:
         raw = _read_docx_manuscript(path)
     else:
         raise ValueError(f"unsupported speech type: {path.suffix}; expected .txt/.md/.docx")
-    return strip_redundant_document_title(raw, source_stem=path.stem)
+    return raw
 
 
 def build_imagesgallery(args: argparse.Namespace) -> Dict[str, object]:
@@ -537,7 +883,8 @@ def build_imagesgallery(args: argparse.Namespace) -> Dict[str, object]:
     speech_path = Path(args.speech).expanduser().resolve()
     out_base = Path(args.out).expanduser().resolve()
     ppt_dir_name = ppt_path.stem.strip() or "ppt"
-    gallery_dir = out_base / ppt_dir_name / "imagesgallery"
+    deck_root = out_base / ppt_dir_name
+    gallery_dir = deck_root / "imagesgallery"
     images_dir = gallery_dir / "images"
 
     if not ppt_path.exists():
@@ -560,7 +907,12 @@ def build_imagesgallery(args: argparse.Namespace) -> Dict[str, object]:
     pdftoppm_bin = resolve_bin("pdftoppm") if need_pdftoppm else None
     image_abs_paths = convert_ppt_to_images(ppt_path, images_dir, soffice_bin=soffice_bin, pdftoppm_bin=pdftoppm_bin)
 
-    manuscript_raw = read_manuscript(speech_path)
+    prepared_manuscript = prepare_session_manuscript(
+        speech_path,
+        deck_root,
+        rendered_slide_count=len(image_abs_paths),
+    )
+    manuscript_raw = prepared_manuscript.text
     manuscript_norm = normalize_for_alignment(manuscript_raw)
     if not manuscript_norm:
         raise ValueError("speech content is empty after normalization")
@@ -580,9 +932,19 @@ def build_imagesgallery(args: argparse.Namespace) -> Dict[str, object]:
     manifest = {
         "version": VERSION,
         "source_ppt": str(ppt_path),
-        "source_speech": str(speech_path),
+        "source_speech": str(prepared_manuscript.source_path),
         "items": items,
     }
+    risk_report_path, risk_summary = _write_risk_report(
+        deck_root,
+        ppt_path,
+        speech_path,
+        prepared_manuscript,
+        rendered_slide_count=len(image_abs_paths),
+    )
+    if risk_report_path is not None and risk_summary is not None:
+        manifest["risk_report"] = str(risk_report_path)
+        manifest["risk_summary"] = risk_summary
 
     manifest_path = gallery_dir / "imagesgallery.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
