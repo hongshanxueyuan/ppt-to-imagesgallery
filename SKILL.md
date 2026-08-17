@@ -434,7 +434,8 @@ PY
 ```bash
 python3 scripts/synthesize_imagesgallery_audio.py \
   --manifest /path/to/output/<ppt_name>/imagesgallery/imagesgallery.json \
-  --voice longxiaochun_v3 \
+  --voice longxiaochun_v2 \
+  --model cosyvoice-v2 \
   --rate 1.1 \
   --gap-seconds 1 \
   --final-name full_speech.mp3 \

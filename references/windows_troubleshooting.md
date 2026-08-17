@@ -70,7 +70,7 @@ For long or complex text on Windows, direct CLI argument (`--text`) can be unsta
 - Script now always writes per-page text to file and calls:
 
 ```bash
-bl speech synthesize --text-file <page.txt> ...
+bl speech synthesize --rate 1.1 --text-file <page.txt> ...
 ```
 
 This is the default path after update.
