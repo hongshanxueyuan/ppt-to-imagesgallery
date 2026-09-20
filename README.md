@@ -1,6 +1,6 @@
 # PPT 转有声幻灯片使用说明
 
-这个 skill 现在面向 NLM 工作目录里的 batch-only 下游流程。
+这个 skill 面向 NLM 工作目录里的 batch-only 下游流程。
 如果你是维护者，细节请看 [SKILL.md](./SKILL.md)。
 
 ## 安装
@@ -79,7 +79,7 @@ Codex 会先生成路由目标文件，再继续后续流程。
   在某个 `items[]` 里写 `voice_preset` 或显式 `voice`。
 
 解析顺序固定是 `page 声音覆盖 > 单个 PPT 声音覆盖 > run 默认声音 > 默认女声`。
-一期只支持 `男声` / `女声` 两个预设；显式 `voice` 会直接透传给 TTS。
+支持 `男声` / `女声` 两个预设；显式 `voice` 会直接透传给 TTS。
 如果同一层里预设和显式 `voice` 解析到不同 voice id，整次 run 会直接停止。
 
 ## 常见建议

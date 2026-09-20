@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # PPT To ImagesGallery
 
-这个 skill 现在只教一种主路径：NLM 工作目录里的 batch-only 下游流程。
+这个 skill 只教一种主路径：NLM 工作目录里的 batch-only 下游流程。
 
 运行时的唯一语音来源是 `section-list.json` 里的 `page_content` 和 `page_count`。
 本地 `.ppt` / `.pptx` 决定这次运行哪些 deck 在范围内。
@@ -78,7 +78,7 @@ python scripts/plan_batch_jobs.py --root <folder> --shards 3
 
 ## 单 deck 构建
 
-`scripts/build_imagesgallery.py` 现在是单 deck 的 deterministic build seam。
+`scripts/build_imagesgallery.py` 是单 deck 的 deterministic build seam。
 
 - 输入是一个本地 `.ppt` / `.pptx` 和一个已经解析好的单 section JSON。
 - 输出是图片和 stage-A `imagesgallery.json`。
@@ -152,7 +152,7 @@ python scripts/synthesize_imagesgallery_audio.py \
 
 - `page 声音覆盖 > 单个 PPT 声音覆盖 > run 默认声音 > 默认女声`
 
-一期只支持两个预设:
+支持两个预设:
 
 - `女声 -> longxiaochun_v2`
 - `男声 -> longshu_v2`
