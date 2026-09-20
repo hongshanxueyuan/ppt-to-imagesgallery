@@ -45,31 +45,23 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
         self.assertNotIn("|", cleaned)
 
     def test_normalize_subtitle_for_display_preserves_markdown(self):
-        raw = "- 第 1 页\n\n## 标题\n\n- 列表项\n\n**重点**"
+        raw = "## 标题\n\n- 列表项\n\n**重点**"
         subtitle = normalize_subtitle_for_display(raw)
-        self.assertNotIn("第 1 页", subtitle)
         self.assertIn("## 标题", subtitle)
         self.assertIn("- 列表项", subtitle)
         self.assertIn("**重点**", subtitle)
 
-    def test_build_audio_preserves_risk_report_fields_in_rewritten_manifest(self):
+    def test_build_audio_rewrites_manifest_without_source_speech(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             manifest_path = tmp_path / "imagesgallery.json"
             preview_path = tmp_path / "audio" / "preview.html"
-            risk_report_path = tmp_path / "imagesgallery-risk-report.json"
             manifest_path.write_text(
                 json.dumps(
                     {
                         "version": "1.0",
                         "source_ppt": str(tmp_path / "sample.pptx"),
-                        "source_speech": str(tmp_path / "sample.cleaned.md"),
-                        "risk_report": str(risk_report_path),
-                        "risk_summary": {
-                            "risk_count": 2,
-                            "highest_severity": "warning",
-                            "requires_manual_review": True,
-                        },
+                        "section_id": "1.2",
                         "items": [
                             {
                                 "page_number": 1,
@@ -128,9 +120,12 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
 
             rewritten = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(str(risk_report_path), rewritten["risk_report"])
-        self.assertEqual(2, rewritten["risk_summary"]["risk_count"])
-        self.assertTrue(rewritten["risk_summary"]["requires_manual_review"])
+        self.assertEqual("1.2", rewritten["section_id"])
+        self.assertNotIn("source_speech", rewritten)
+        self.assertIn("audio", rewritten)
+        self.assertEqual(1, len(rewritten["items"]))
+        self.assertEqual("## 标题\n\n第一页正文", rewritten["items"][0]["subtitle"])
+        self.assertEqual(0, rewritten["items"][0]["start"])
 
     def test_parse_args_defaults_to_online_female_voice_config(self):
         args = parse_args(["--manifest", "sample.json"])
@@ -148,7 +143,6 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
                     {
                         "version": "1.0",
                         "source_ppt": str(tmp_path / "sample.pptx"),
-                        "source_speech": str(tmp_path / "sample.cleaned.md"),
                         "items": [
                             {
                                 "page_number": 1,

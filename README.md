@@ -1,9 +1,7 @@
 # PPT 转有声幻灯片使用说明
 
-这个项目给已经安装了 Codex 和相关 skill 的同学使用。  
-你不需要了解代码，只需要准备好文件，然后按下面的话术告诉 Codex 要做什么即可。
-
-如果你是维护者，技术细节请看 [SKILL.md](D:/work/codeup/ppt-to-imagesgallery/SKILL.md)。
+这个 skill 现在面向 NLM 工作目录里的 batch-only 下游流程。
+如果你是维护者，细节请看 [SKILL.md](./SKILL.md)。
 
 ## 安装
 
@@ -12,124 +10,67 @@
 - `https://github.com/hongshanxueyuan/ppt-to-imagesgallery`
 - `https://github.com/hongshanxueyuan/studio-imagegallery-publish`
 
-这两个 skill 要一起安装。  
-如果你后面要推送到 Studio，`studio-imagegallery-publish` 不是可选项。
-生成本地 `imagegallery` 时，也建议明确说出 `ppt-to-imagesgallery` 这个 skill 名字。
-
-安装完成后，建议重启一次 Codex。
+如果后面要推送到 Studio，`studio-imagegallery-publish` 不是可选项。
 
 ## 先准备什么
 
-同一个目录下，准备好一对文件：
+同一个目录下，准备这些内容：
 
-- 一个 PPT 文件：`.pptx`、`.ppt` 或 `.pdf`
-- 一个讲稿文件：优先用 `.md` 或 `.docx`
+- 本地 `.pptx` / `.ppt` 文件
+- 上游生成好的 `section-list.json`
+- 如果后面要推送到 Studio，再准备课程地址和账号
 
-推荐做法：
+这里最重要的变化是：
 
-- 如果是从 NotebookLM 或类似工具导出的内容，优先直接使用配套的 Markdown 讲稿
-- 如果没有 Markdown，讲稿请放到 Word 里保存成 `docx`
-- 不建议只用纯文本 `txt`，因为格式容易丢
+- 本地 PPT 子集决定这次 run 的 scope
+- `section-list.json` 决定顺序、`page_count` 和 `page_content`
+- `.md` 不再是这个 skill 的运行时输入合同
 
-如果后面要推送到 Studio，还需要准备：
+## 怎么说给 Codex
 
-- Studio 账号和密码
-- 批量推送时对应课程的课程地址
-
-## 怎么用
-
-### 场景一：先在本地生成，确认没问题再推送
-
-把 PPT 和讲稿放好后，对 Codex 说：
+### 场景一：先做本地生成
 
 ```text
-用 ppt-to-imagesgallery 把这个 PPT 转成有声幻灯片
+用 ppt-to-imagesgallery 处理这个 NLM 工作目录，先做 preflight，再生成本地 imagegallery
 ```
 
-处理完成后，Codex 会生成预览文件。你可以先看页面、字幕和音频是否正常。
-音频合成默认会按线上当前女声配置 `cosyvoice-v2 + longxiaochun_v2`，并以 `1.1` 倍速调用百炼 CLI 生成 MP3。
+Codex 会先跑整批 preflight。
+如果 preflight 失败，它会停在 `_batch/imagegallery-preflight-report.json`，不会继续渲染、音频或 preview。
+如果 preflight 通过，才会继续生成图片、manifest、音频和 preview。
 
-确认没问题后，再对 Codex 说：
+### 场景二：批量生成并准备 Studio 路由
 
 ```text
-用 studio-imagegallery-publish 推送到 Studio：<这里换成目标小节地址>
+用 ppt-to-imagesgallery 处理这个 NLM 工作目录，并为 Studio 批量推送准备目标路由
 ```
 
-这里的小节地址通常长这样：
+如果需要批量推送，再额外提供课程地址：
 
 ```text
-https://studio.xxx.com/container/block-v1:ORG+COURSE+RUN+type@vertical+block@XXXX
+课程地址是：https://studio.xxx.com/course/course-v1:ORG+COURSE+RUN
 ```
 
-### 场景二：直接生成并推送
+Codex 会先生成路由目标文件，再继续后续流程。
 
-如果你不想先本地确认，也可以直接说：
+## 你会看到什么
 
-```text
-用 ppt-to-imagesgallery 把这个 PPT 转成有声幻灯片，然后用 studio-imagegallery-publish 推送到 Studio：<目标小节地址>
-```
+- planner 结果
+- 如有失败时的 `_batch/imagegallery-preflight-report.json`
+- 每个 deck 的 `imagesgallery/imagesgallery.json`
+- 音频目录和 `preview.html`
+- 如果做 Studio 规划，还会有 `_batch/imagegallery-push-studio-targets.json`
 
-## 批量操作怎么说
+## 批量时重点留意
 
-如果一个目录下有很多组 PPT 和讲稿，可以直接说：
-
-```text
-用 ppt-to-imagesgallery 把这个目录批量生成 imagegallery
-```
-
-如果要批量生成并推送，再说：
-
-```text
-用 ppt-to-imagesgallery 把这个目录批量生成 imagegallery，然后用 studio-imagegallery-publish 批量推送到 Studio，课程地址是：<课程地址>
-```
-
-这里的课程地址通常长这样：
-
-```text
-https://studio.xxx.com/course/course-v1:ORG+COURSE+RUN
-```
-
-批量推送时，Codex 不会直接开推，而是会先生成一份待确认清单。  
-它会把这份路由文件的可点击路径发给你，你可以随手点开检查；只要课程链接没有问题，Codex 会直接继续执行，不用专门停下来等你回复确认。
-
-## 批量时你可以重点留意什么
-
-- 每个 PPT 是否都找到了对应讲稿
-- 目标 Studio 课程地址是否正确
-- 每个文件要推送到哪个小节，是否和预期一致
-
-Codex 默认会用 `三 agent 执行`。  
-这个默认只用于本地生成阶段。  
-最后推送到 Studio 时，会自动改成 `顺序执行`，避免多个发布任务同时登录把会话打架。  
-如果当前环境临时不能开多 agent，本地生成阶段才会自动退回 `顺序执行`。
-
-## 关于课程 ID 不一致
-
-有一种常见情况是：这门课后来通过课程包导入导出，被复制到了另一个平台或另一个课程里。  
-这时你输入的 Studio 课程地址，可能和目录里的原始 JSON 记录不一致。
-
-遇到这种情况时，Codex 应该先停下来问你确认，而不是直接继续。
-
-如果你确认目标课程确实是同一门课的导入副本，就明确告诉 Codex 可以继续。  
-如果你不确定，就不要继续推送。
+- 本地每个 PPT 是否都唯一匹配到了一个 `section-list` 记录
+- `page_count` 和真实 PPT 页数是否一致
+- 课程地址是否正确
+- 生成的 Studio 目标 vertical 是否符合预期
 
 ## 常见建议
 
-- 先小范围试一节，确认效果后再批量跑
-- 批量推送前，先看一遍 Codex 生成的确认清单
-- 涉及生成 `imagegallery` 时，明确说出 `ppt-to-imagesgallery` 这个 skill 名字
-- 涉及推送到 Studio 时，明确说出 `studio-imagegallery-publish` 这个 skill 名字，避免 Codex 跑去加载浏览器类 skill
-- 批量推送结束后，Codex 应该把每个已推送成功的小节 Studio 地址列出来，方便运营逐个点开人工微调
-- 如果讲稿里有分页标记、标题或富文本格式，直接保留原文件即可，Codex 会按当前 skill 规则处理
-
-## 这份 README 不展开的内容
-
-下面这些实现细节，这里不展开：
-
-- 脚本命令
-- 音频合成细节
-- 路由映射规则
-- Windows 排障
-- 开发和测试说明
-
-如果需要看这些内容，请直接看 [SKILL.md](D:/work/codeup/ppt-to-imagesgallery/SKILL.md)。
+- 先拿一两个 section 小范围试跑
+- preflight fail 时先修 `section-list` 或本地 PPT，再整批重跑
+- 涉及本地生成时，明确说出 `ppt-to-imagesgallery`
+- 涉及推送到 Studio 时，明确说出 `studio-imagegallery-publish`
+- 批量推送结束后，保留 Codex 给出的目标 vertical URL 方便人工复核
