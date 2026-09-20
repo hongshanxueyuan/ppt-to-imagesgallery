@@ -1,4 +1,4 @@
 interface:
   display_name: "PPT To ImagesGallery"
   short_description: "处理本地 NLM 工作目录里的 PPT 子集，按 section-list 生成 imagesgallery 输出"
-  default_prompt: "调用 $ppt-to-imagesgallery 处理本地 NLM 工作目录，先跑 section-list preflight，再基于 page_content 生成 imagesgallery 输出。"
+  default_prompt: "调用 $ppt-to-imagesgallery 处理本地 NLM 工作目录，先跑 section-list preflight，再基于 page_content 生成 imagesgallery 输出。需要音频时，按 run 默认声音、单个 PPT 声音覆盖、page 声音覆盖 这套术语处理声音配置。"

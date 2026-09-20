@@ -175,6 +175,11 @@ class TestBuildImagesGallery(unittest.TestCase):
         self.assertIn("单 deck 构建", skill_doc)
         self.assertIn("音频与预览", skill_doc)
         self.assertIn("批量 Studio 规划", skill_doc)
+        self.assertIn("run 默认声音", skill_doc)
+        self.assertIn("单个 PPT 声音覆盖", skill_doc)
+        self.assertIn("page 声音覆盖", skill_doc)
+        self.assertIn("男声", skill_doc)
+        self.assertIn("女声", skill_doc)
         self.assertNotIn("source_speech", skill_doc)
         self.assertNotIn("prompt_full_speech_session", skill_doc)
 
@@ -185,6 +190,9 @@ class TestBuildImagesGallery(unittest.TestCase):
         agent_yaml = (SCRIPT_DIR.parent / "agents" / "openai.yaml").read_text(encoding="utf-8")
         self.assertIn("section-list", agent_yaml)
         self.assertIn("调用 $ppt-to-imagesgallery", agent_yaml)
+        self.assertIn("run 默认声音", agent_yaml)
+        self.assertIn("单个 PPT 声音覆盖", agent_yaml)
+        self.assertIn("page 声音覆盖", agent_yaml)
         self.assertNotIn("manuscript", agent_yaml)
 
 

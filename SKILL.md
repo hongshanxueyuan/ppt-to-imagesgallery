@@ -125,7 +125,7 @@ stage-A manifest 就绪后，再跑音频脚本:
 ```bash
 python scripts/synthesize_imagesgallery_audio.py \
   --manifest /path/to/imagesgallery.json \
-  --voice longxiaochun_v2 \
+  --voice-preset 女声 \
   --model cosyvoice-v2 \
   --rate 1.1 \
   --gap-seconds 1
@@ -138,6 +138,31 @@ python scripts/synthesize_imagesgallery_audio.py \
 - 写时间轴
 - 重写成 stage-B manifest
 - 生成 `preview.html`
+
+声音配置合同统一用下面这组术语:
+
+- `run 默认声音`
+  通过命令行传 `--voice-preset 女声|男声`，或者传显式 `--voice <voice_id>`。
+- `单个 PPT 声音覆盖`
+  在 `imagesgallery.json` 顶层加 `voice_preset` 或显式 `voice`。
+- `page 声音覆盖`
+  在某个 `items[]` 上加 `voice_preset` 或显式 `voice`。
+
+解析顺序固定是:
+
+- `page 声音覆盖 > 单个 PPT 声音覆盖 > run 默认声音 > 默认女声`
+
+一期只支持两个预设:
+
+- `女声 -> longxiaochun_v2`
+- `男声 -> longshu_v2`
+
+冲突规则:
+
+- 只在同一对象内部判定冲突
+- 同一 `run 默认声音`、同一 `单个 PPT 声音覆盖` 或同一 `page 声音覆盖` 里，如果 `voice_preset` 和显式 `voice` 解析到不同 voice id，整次 run 直接停止
+- 如果预设和显式 `voice` 实际解析到同一个 voice id，不算冲突
+- 不同层之间的不同值属于合法覆盖，不算冲突
 
 ## 批量 Studio 规划
 
