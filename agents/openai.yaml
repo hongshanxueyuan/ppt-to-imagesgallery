@@ -1,4 +1,4 @@
 interface:
   display_name: "PPT To ImagesGallery"
-  short_description: "Convert PPT + manuscript to imagesgallery JSON"
-  default_prompt: "Use $ppt-to-imagesgallery to convert a PPT and aligned manuscript into an imagesgallery output."
+  short_description: "处理本地 NLM 工作目录里的 PPT 子集，按 section-list 生成 imagesgallery 输出"
+  default_prompt: "调用 $ppt-to-imagesgallery 处理本地 NLM 工作目录，先跑 section-list preflight，再基于 page_content 生成 imagesgallery 输出。"

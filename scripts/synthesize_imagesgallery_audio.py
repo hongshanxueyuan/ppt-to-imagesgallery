@@ -11,10 +11,14 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Sequence
 
-from align_manuscript import strip_pagination_noise
-
-
 TABLE_ALIGN_RE = re.compile(r"^[:\-\s]+$")
+PAGINATION_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:"
+    r"第\s*\d+\s*页(?:\s*/\s*共\s*\d+\s*页)?"
+    r"|page\s*\d+(?:\s*(?:/|of)\s*\d+)?"
+    r"|slide\s*\d+(?:\s*(?:/|of)\s*\d+)?"
+    r")\s*$"
+)
 DEFAULT_TTS_VOICE = "longxiaochun_v2"
 DEFAULT_TTS_MODEL = "cosyvoice-v2"
 DEFAULT_TTS_RATE = 1.1
@@ -93,6 +97,10 @@ def to_rel_url(target: str, base_dir: Path) -> str:
     return str(p).replace("\\", "/")
 
 
+def strip_pagination_noise(text: str) -> str:
+    return PAGINATION_LINE_RE.sub("", text or "")
+
+
 def clean_speech_for_tts(text: str) -> str:
     cleaned = strip_pagination_noise(text or "")
     lines = []
@@ -135,7 +143,7 @@ def clean_speech_for_tts(text: str) -> str:
 
 
 def normalize_subtitle_for_display(text: str) -> str:
-    return strip_pagination_noise(text or "").strip()
+    return (text or "").strip()
 
 
 def build_preview_html(manifest: Dict[str, object], manifest_path: Path) -> Path:
@@ -368,24 +376,19 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
             }
         )
 
-    rewritten_manifest = {
-        "version": data.get("version", "1.0"),
-        "source_ppt": data.get("source_ppt", ""),
-        "source_speech": data.get("source_speech", ""),
-        "audio": {
-            "voice": voice,
-            "rate": rate,
-            "model": model,
-            "gap_seconds_between_segments": gap_seconds,
-            "full_audio": str(final_audio),
-            "total_duration_seconds": round(cursor, 3),
-            "timeline_file": str(timeline_path),
-        },
-        "items": rewritten_items,
+    rewritten_manifest = {key: value for key, value in data.items() if key not in {"items", "audio", "source_speech"}}
+    rewritten_manifest["version"] = data.get("version", "1.0")
+    rewritten_manifest["source_ppt"] = data.get("source_ppt", "")
+    rewritten_manifest["audio"] = {
+        "voice": voice,
+        "rate": rate,
+        "model": model,
+        "gap_seconds_between_segments": gap_seconds,
+        "full_audio": str(final_audio),
+        "total_duration_seconds": round(cursor, 3),
+        "timeline_file": str(timeline_path),
     }
-    for optional_key in ("risk_report", "risk_summary"):
-        if optional_key in data:
-            rewritten_manifest[optional_key] = data[optional_key]
+    rewritten_manifest["items"] = rewritten_items
     manifest_path.write_text(json.dumps(rewritten_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     preview_html_path = build_preview_html(rewritten_manifest, manifest_path)
     timeline["preview_html"] = str(preview_html_path)
