@@ -67,6 +67,21 @@ Codex 会先生成路由目标文件，再继续后续流程。
 - 课程地址是否正确
 - 生成的 Studio 目标 vertical 是否符合预期
 
+## 音频阶段怎么配声音
+
+音频脚本统一用这些术语：
+
+- `run 默认声音`
+  用命令行传 `--voice-preset 女声|男声`，或显式 `--voice <voice_id>`。
+- `单个 PPT 声音覆盖`
+  在当前 `imagesgallery.json` 顶层写 `voice_preset` 或显式 `voice`。
+- `page 声音覆盖`
+  在某个 `items[]` 里写 `voice_preset` 或显式 `voice`。
+
+解析顺序固定是 `page 声音覆盖 > 单个 PPT 声音覆盖 > run 默认声音 > 默认女声`。
+一期只支持 `男声` / `女声` 两个预设；显式 `voice` 会直接透传给 TTS。
+如果同一层里预设和显式 `voice` 解析到不同 voice id，整次 run 会直接停止。
+
 ## 常见建议
 
 - 先拿一两个 section 小范围试跑

@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Mapping, Sequence
 
 TABLE_ALIGN_RE = re.compile(r"^[:\-\s]+$")
 PAGINATION_LINE_RE = re.compile(
@@ -20,8 +20,42 @@ PAGINATION_LINE_RE = re.compile(
     r")\s*$"
 )
 DEFAULT_TTS_VOICE = "longxiaochun_v2"
+VOICE_PRESET_TO_ID = {
+    "女声": DEFAULT_TTS_VOICE,
+    "男声": "longshu_v2",
+}
 DEFAULT_TTS_MODEL = "cosyvoice-v2"
 DEFAULT_TTS_RATE = 1.1
+
+
+def normalize_optional_text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def resolve_configured_voice(config: Mapping[str, object], label: str) -> str | None:
+    voice = normalize_optional_text(config.get("voice"))
+    voice_preset = normalize_optional_text(config.get("voice_preset"))
+    resolved_values: List[tuple[str, str]] = []
+
+    if voice_preset:
+        if voice_preset not in VOICE_PRESET_TO_ID:
+            raise ValueError(f"{label} 使用了不支持的 voice_preset: {voice_preset}")
+        resolved_values.append((f"voice_preset={voice_preset}", VOICE_PRESET_TO_ID[voice_preset]))
+
+    if voice:
+        resolved_values.append((f"voice={voice}", voice))
+
+    if not resolved_values:
+        return None
+
+    distinct_values = {value for _, value in resolved_values}
+    if len(distinct_values) > 1:
+        rendered = "，".join(f"{source} -> {value}" for source, value in resolved_values)
+        raise ValueError(f"{label} 存在冲突的声音配置：{rendered}。请修正后再继续。")
+
+    return resolved_values[0][1]
 
 
 def resolve_bin(name: str) -> str:
@@ -223,11 +257,20 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
     bl_bin = resolve_bin("bl")
     ffmpeg_bin = resolve_bin("ffmpeg")
     ffprobe_bin = resolve_bin("ffprobe")
-    voice = DEFAULT_TTS_VOICE if not args.voice else str(args.voice)
     model = DEFAULT_TTS_MODEL if not args.model else str(args.model)
     rate = DEFAULT_TTS_RATE if args.rate is None else float(args.rate)
 
-    segment_rows: List[Dict[str, object]] = []
+    run_voice = resolve_configured_voice(
+        {
+            "voice": getattr(args, "voice", ""),
+            "voice_preset": getattr(args, "voice_preset", ""),
+        },
+        "run 默认声音",
+    )
+    ppt_voice = resolve_configured_voice(data, "单个 PPT 声音覆盖")
+    resolved_fallback_voice = ppt_voice or run_voice or DEFAULT_TTS_VOICE
+
+    prepared_items: List[Dict[str, object]] = []
     for item in sorted_items:
         page_number = int(item.get("page_number", item.get("page")))
         subtitle = normalize_subtitle_for_display(str(item.get("speech", item.get("subtitle", ""))))
@@ -237,6 +280,25 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
         if not speech:
             raise ValueError(f"empty speech on page {page_number}")
 
+        page_voice = resolve_configured_voice(item, f"page {page_number} 声音覆盖")
+        prepared_items.append(
+            {
+                "page_number": page_number,
+                "image": item.get("image"),
+                "subtitle": subtitle,
+                "speech": speech,
+                "voice": page_voice or resolved_fallback_voice,
+                "configured_voice": normalize_optional_text(item.get("voice")),
+                "configured_voice_preset": normalize_optional_text(item.get("voice_preset")),
+            }
+        )
+
+    segment_rows: List[Dict[str, object]] = []
+    for item in prepared_items:
+        page_number = int(item["page_number"])
+        subtitle = str(item["subtitle"])
+        speech = str(item["speech"])
+        voice = str(item["voice"])
         seg_path = segments_dir / f"page-{page_number:03d}.mp3"
         if not (args.skip_existing and seg_path.exists()):
             text_file = texts_dir / f"page-{page_number:03d}.txt"
@@ -276,6 +338,9 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
                 "tts_text": speech,
                 "segment_audio": str(seg_path),
                 "duration_seconds": round(duration, 3),
+                "voice": voice,
+                "configured_voice": item["configured_voice"],
+                "configured_voice_preset": item["configured_voice_preset"],
             }
         )
 
@@ -346,7 +411,7 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
     timeline = {
         "version": "1.0",
         "source_manifest": str(manifest_path),
-        "voice": voice,
+        "voice": resolved_fallback_voice,
         "rate": rate,
         "model": model,
         "gap_seconds_between_segments": gap_seconds,
@@ -375,12 +440,16 @@ def build_audio(args: argparse.Namespace) -> Dict[str, object]:
                 "end": end_with_gap,
             }
         )
+        if row.get("configured_voice"):
+            rewritten_items[-1]["voice"] = row["configured_voice"]
+        if row.get("configured_voice_preset"):
+            rewritten_items[-1]["voice_preset"] = row["configured_voice_preset"]
 
     rewritten_manifest = {key: value for key, value in data.items() if key not in {"items", "audio", "source_speech"}}
     rewritten_manifest["version"] = data.get("version", "1.0")
     rewritten_manifest["source_ppt"] = data.get("source_ppt", "")
     rewritten_manifest["audio"] = {
-        "voice": voice,
+        "voice": resolved_fallback_voice,
         "rate": rate,
         "model": model,
         "gap_seconds_between_segments": gap_seconds,
@@ -399,7 +468,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Synthesize per-page speech and merge into one MP3 with timestamps.")
     p.add_argument("--manifest", required=True, help="path to imagesgallery.json")
     p.add_argument("--out-dir", default="", help="output directory for segment and merged audios")
-    p.add_argument("--voice", default=DEFAULT_TTS_VOICE, help="TTS voice id for bl speech synthesize")
+    p.add_argument("--voice", default="", help="explicit run default TTS voice id for bl speech synthesize")
+    p.add_argument("--voice-preset", default="", choices=sorted(VOICE_PRESET_TO_ID), help="run default voice preset")
     p.add_argument("--rate", type=float, default=DEFAULT_TTS_RATE, help="speech rate for bl speech synthesize, e.g. 1.1")
     p.add_argument("--model", default=DEFAULT_TTS_MODEL, help="TTS model id for bl speech synthesize")
     p.add_argument("--language", default="", help="optional language hint, e.g. zh")
