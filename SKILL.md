@@ -36,21 +36,34 @@ bl --version
 bl auth status
 ```
 
-3. 如果缺少 `bl`，按阿里云官方文档安装。
+3. 如果缺少 `bl`，安装 CLI 并初始化百炼 skills。
 
 ```bash
 npm install -g bailian-cli
-npx skills add modelstudioai/cli --all -g
+bl skill init
 bl --version
 ```
 
-4. 如果还没有配置 API Key，再向用户索取并登录。
+4. 如果需要更新 CLI，使用更新命令。
 
 ```bash
-bl auth login --api-key <USER_API_KEY>
+bl update
+bl --version
 ```
 
-如果用户明确说先跳过 API Key，就先停在音频之前；不要阻塞 preflight、图片渲染或 manifest 生成。
+如果只需要更新已安装的百炼 skills，使用：
+
+```bash
+bl skill update
+```
+
+5. 如果还没有配置 API Key，使用 API Key 登录。
+
+```bash
+bl auth login --api-key <API_KEY>
+```
+
+如果用户明确要求跳过 API Key，停在音频阶段之前；继续运行 preflight、图片渲染和 manifest 生成。
 
 ## 主流程
 
