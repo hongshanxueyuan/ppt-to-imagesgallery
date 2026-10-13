@@ -19,6 +19,7 @@ disable-model-invocation: true
 - 生成本地 `imagesgallery` 用这个 skill。
 - 推送到 Studio 必须切换到 `studio-imagegallery-publish`。
 - 不要把浏览器自动化当成 Studio 推送兜底。
+- 压缩页图使用 Pillow；如果当前 Python 环境缺少 Pillow，先运行 `python -m pip install -r requirements.txt`。
 
 ## BL 前置检查
 
@@ -88,6 +89,9 @@ python scripts/plan_batch_jobs.py --root <folder> --shards 3
    - 用 deck 对应的 PPT
    - 用该 deck 匹配到的 `section-list` 记录
    - 直接从 `page_content` 生成 stage-A manifest
+   - 根据单 deck builder 的退出码判断成功或失败；非零时记录 deck 路径和完整 stderr，继续处理后续 admitted deck
+7. 只对构建成功的 deck 继续音频和 preview；失败 deck 不进入后续阶段。
+8. 所有 admitted deck 都尝试完成后，如果有单 deck 失败，明确报告“批次未全部成功”，列出成功数、失败 deck 和各自原因；不要把批次报告为成功。
 
 ## 单 deck 构建
 
@@ -95,6 +99,10 @@ python scripts/plan_batch_jobs.py --root <folder> --shards 3
 
 - 输入是一个本地 `.ppt` / `.pptx` 和一个已经解析好的单 section JSON。
 - 输出是图片和 stage-A `imagesgallery.json`。
+- 每张页图不超过 `1,200,000` 字节时保留原文件；超过时转成 JPG，保留像素宽高，依次尝试 95、90、85、80 质量，取第一个达到上限的结果。
+- 80 是允许的最低编码质量，不是可读性检测或可读保证；如果压到质量 80 仍超限，构建会失败并说明 deck、页图、源文件大小、目标上限和原因。失败时整个 deck 的 gallery 会清理，不会留下 manifest 或部分页图。
+- 压缩覆盖了 1707×960 的真实页图样本：3 张超限页均在质量 95 达到上限，逐张检查后中文正文、表格和图示标签仍清楚。该结果只代表本次样本；发布其他课件前仍应抽查压缩页图。
+- manifest 的 `items[].image` 始终指向最终 PNG 或 JPG；音频阶段会保留这个路径。
 - stage-A `items[].speech` 直接来自 `page_content`。
 - 旧的 manuscript-path 字段已经从 manifest 合同里移除。
 
