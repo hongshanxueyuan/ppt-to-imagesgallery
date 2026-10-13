@@ -16,6 +16,9 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 
 VERSION = "1.0"
+MAX_PAGE_IMAGE_BYTES = 1_200_000
+# 80 is a hard encoding floor, not an automated legibility guarantee.
+JPEG_QUALITIES = (95, 90, 85, 80)
 PAGINATION_LINE_RE = re.compile(
     r"(?im)^\s*(?:[-*]\s*)?(?:"
     r"第\s*\d+\s*页(?:\s*/\s*共\s*\d+\s*页)?"
@@ -82,6 +85,40 @@ def _build_image_name_timestamp() -> str:
 
 def _build_page_image_name(image_name_prefix: str, page_number: int, image_name_timestamp: str) -> str:
     return f"{image_name_prefix}__page-{page_number:03d}__{image_name_timestamp}.png"
+
+
+def _compress_page_image(image_path: Path) -> Path:
+    if image_path.stat().st_size <= MAX_PAGE_IMAGE_BYTES:
+        return image_path
+
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("Pillow is required to compress oversized page images; install requirements.txt") from exc
+
+    jpg_path = image_path.with_suffix(".jpg")
+    try:
+        with Image.open(image_path) as source:
+            source.load()
+            rgba = source.convert("RGBA")
+            rgb = Image.new("RGB", rgba.size, "white")
+            rgb.paste(rgba, mask=rgba.getchannel("A"))
+
+            with tempfile.TemporaryDirectory(prefix="ppt-page-image-") as tmp:
+                encoded_path = Path(tmp) / "page.jpg"
+                for quality in JPEG_QUALITIES:
+                    rgb.save(encoded_path, format="JPEG", quality=quality, optimize=True, progressive=True)
+                    if encoded_path.stat().st_size <= MAX_PAGE_IMAGE_BYTES:
+                        encoded_path.replace(jpg_path)
+                        image_path.unlink()
+                        return jpg_path
+
+        raise RuntimeError(
+            f"JPEG remains above {MAX_PAGE_IMAGE_BYTES} bytes at the minimum quality {JPEG_QUALITIES[-1]}"
+        )
+    except Exception:
+        jpg_path.unlink(missing_ok=True)
+        raise
 
 
 def _export_ppt_via_powerpoint_com(
@@ -343,6 +380,19 @@ def build_imagesgallery(args: argparse.Namespace) -> Dict[str, object]:
         image_name_prefix=image_name_prefix,
         image_name_timestamp=image_name_timestamp,
     )
+
+    final_image_paths: List[Path] = []
+    for image_abs_path in image_abs_paths:
+        source_size = image_abs_path.stat().st_size
+        try:
+            final_image_paths.append(_compress_page_image(image_abs_path))
+        except Exception as exc:
+            shutil.rmtree(gallery_dir, ignore_errors=True)
+            raise RuntimeError(
+                f"failed to build deck {ppt_path}: page image {image_abs_path.name} "
+                f"is {source_size} bytes; target is at most {MAX_PAGE_IMAGE_BYTES} bytes; {exc}"
+            ) from exc
+    image_abs_paths = final_image_paths
 
     rendered_slide_count = len(image_abs_paths)
     expected_page_count = int(section["page_count"])

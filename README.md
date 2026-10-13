@@ -37,6 +37,7 @@
 Codex 会先跑整批 preflight。
 如果 preflight 失败，它会停在 `_batch/imagegallery-preflight-report.json`，不会继续渲染、音频或 preview。
 如果 preflight 通过，才会继续生成图片、manifest、音频和 preview。
+页图会保留原尺寸；超过 1,200,000 字节的页图会压缩成 JPG。压缩失败时只跳过该 deck，继续处理后续 deck，并在最后汇总失败项。
 
 ### 场景二：批量生成并准备 Studio 路由
 

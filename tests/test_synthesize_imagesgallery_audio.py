@@ -100,7 +100,7 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
                         "items": [
                             {
                                 "page_number": 1,
-                                "image": "images/page-001.png",
+                                "image": "images/page-001.jpg",
                                 "speech": "## 标题\n\n第一页正文",
                             }
                         ],
@@ -161,6 +161,7 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
         self.assertEqual(1, len(rewritten["items"]))
         self.assertEqual("## 标题\n\n第一页正文", rewritten["items"][0]["subtitle"])
         self.assertEqual(0, rewritten["items"][0]["start"])
+        self.assertEqual("images/page-001.jpg", rewritten["items"][0]["image"])
 
     def test_parse_args_leaves_run_voice_source_unset_until_resolution(self):
         args = parse_args(["--manifest", "sample.json"])
