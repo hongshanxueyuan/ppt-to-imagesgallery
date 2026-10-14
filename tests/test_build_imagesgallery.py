@@ -1,6 +1,7 @@
 import argparse
 import io
 import json
+import random
 import struct
 import tempfile
 import unittest
@@ -27,7 +28,7 @@ from build_imagesgallery import (  # noqa: E402
 )
 
 
-MAX_IMAGE_BYTES = 1_200_000
+MAX_IMAGE_BYTES = 500_000
 
 
 def _png_bytes_with_exact_size(image: Image.Image, size: int) -> bytes:
@@ -233,6 +234,103 @@ class TestBuildImagesGallery(unittest.TestCase):
             self.assertFalse(image_path.with_suffix(".png").exists())
             self.assertEqual("source-ppt", ppt_path.read_bytes().decode())
 
+    def test_builder_uses_highest_jpeg_quality_that_fits_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            ppt_path = tmp_path / "sample.pptx"
+            section_json_path = tmp_path / "section.json"
+            out_dir = tmp_path / "out"
+            ppt_path.write_bytes(b"source-ppt")
+            section_json_path.write_text(
+                json.dumps({"page_count": 1, "page_content": ["合成测试页"]}),
+                encoding="utf-8",
+            )
+
+            source_image = Image.frombytes(
+                "RGB",
+                (768, 768),
+                random.Random(271828).randbytes(768 * 768 * 3),
+            )
+            source_stream = io.BytesIO()
+            source_image.save(source_stream, format="PNG", compress_level=1)
+            source_bytes = source_stream.getvalue()
+
+            reference_encodings = {}
+            for quality in (95, 90):
+                reference = io.BytesIO()
+                source_image.save(
+                    reference,
+                    format="JPEG",
+                    quality=quality,
+                    optimize=True,
+                    progressive=True,
+                )
+                reference_encodings[quality] = reference.getvalue()
+
+            self.assertGreater(len(source_bytes), MAX_IMAGE_BYTES)
+            self.assertGreater(len(reference_encodings[95]), MAX_IMAGE_BYTES)
+            self.assertLessEqual(len(reference_encodings[90]), MAX_IMAGE_BYTES)
+
+            def fake_convert(_ppt_path, images_dir, **kwargs):
+                image_path = images_dir / "page-001.png"
+                image_path.write_bytes(source_bytes)
+                return [image_path]
+
+            args = argparse.Namespace(
+                ppt=str(ppt_path),
+                section_json=str(section_json_path),
+                out=str(out_dir),
+                dry_run=True,
+            )
+            with patch("build_imagesgallery.resolve_bin", return_value="fake-bin"), patch(
+                "build_imagesgallery.convert_ppt_to_images", side_effect=fake_convert
+            ):
+                manifest = build_imagesgallery(args)
+
+            gallery_dir = out_dir / "sample" / "imagesgallery"
+            image_path = gallery_dir / manifest["items"][0]["image"]
+            self.assertEqual("images/page-001.jpg", manifest["items"][0]["image"])
+            self.assertEqual(reference_encodings[90], image_path.read_bytes())
+            self.assertLessEqual(image_path.stat().st_size, MAX_IMAGE_BYTES)
+
+    def test_builder_downsamples_oversized_page_to_2560_pixel_long_edge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            ppt_path = tmp_path / "sample.pptx"
+            section_json_path = tmp_path / "section.json"
+            out_dir = tmp_path / "out"
+            ppt_path.write_bytes(b"source-ppt")
+            section_json_path.write_text(
+                json.dumps({"page_count": 1, "page_content": ["第一页正文"]}),
+                encoding="utf-8",
+            )
+            source_bytes = _png_with_exact_size(MAX_IMAGE_BYTES + 1, dimensions=(5333, 3000))
+
+            def fake_convert(_ppt_path, images_dir, **kwargs):
+                image_path = images_dir / "page-001.png"
+                image_path.write_bytes(source_bytes)
+                return [image_path]
+
+            args = argparse.Namespace(
+                ppt=str(ppt_path),
+                section_json=str(section_json_path),
+                out=str(out_dir),
+                dry_run=True,
+            )
+            with patch("build_imagesgallery.resolve_bin", return_value="fake-bin"), patch(
+                "build_imagesgallery.convert_ppt_to_images", side_effect=fake_convert
+            ):
+                manifest = build_imagesgallery(args)
+
+            gallery_dir = out_dir / "sample" / "imagesgallery"
+            image_path = gallery_dir / manifest["items"][0]["image"]
+            with Image.open(image_path) as image:
+                self.assertEqual((2560, 1440), image.size)
+                self.assertEqual("JPEG", image.format)
+                self.assertLess(abs(image.width / image.height - 5333 / 3000), 0.001)
+            self.assertLessEqual(image_path.stat().st_size, MAX_IMAGE_BYTES)
+            self.assertEqual("images/page-001.jpg", manifest["items"][0]["image"])
+
     def test_builder_reports_compression_failure_and_removes_partial_gallery(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -244,25 +342,19 @@ class TestBuildImagesGallery(unittest.TestCase):
                 json.dumps({"page_count": 2, "page_content": ["第一页正文", "第二页正文"]}),
                 encoding="utf-8",
             )
-            source_bytes = _png_with_exact_size(MAX_IMAGE_BYTES + 1)
+            first_page_bytes = _text_slide_png_with_exact_size(MAX_IMAGE_BYTES + 1)
+            noisy_image = Image.frombytes("RGB", (1024, 1024), random.Random(7).randbytes(1024 * 1024 * 3))
+            noisy_stream = io.BytesIO()
+            noisy_image.save(noisy_stream, format="PNG", compress_level=1)
+            second_page_bytes = noisy_stream.getvalue()
 
             def fake_convert(_ppt_path, images_dir, **kwargs):
                 image_paths = []
                 for page_number in (1, 2):
                     image_path = images_dir / f"page-{page_number:03d}.png"
-                    image_path.write_bytes(source_bytes)
+                    image_path.write_bytes(first_page_bytes if page_number == 1 else second_page_bytes)
                     image_paths.append(image_path)
                 return image_paths
-
-            original_save = Image.Image.save
-            save_calls = 0
-
-            def fail_second_encoding(image, *args, **kwargs):
-                nonlocal save_calls
-                save_calls += 1
-                if save_calls == 2:
-                    raise OSError("encoder unavailable")
-                return original_save(image, *args, **kwargs)
 
             args = argparse.Namespace(
                 ppt=str(ppt_path),
@@ -272,17 +364,17 @@ class TestBuildImagesGallery(unittest.TestCase):
             )
             with patch("build_imagesgallery.resolve_bin", return_value="fake-bin"), patch(
                 "build_imagesgallery.convert_ppt_to_images", side_effect=fake_convert
-            ), patch("PIL.Image.Image.save", new=fail_second_encoding):
+            ):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    r"sample\.pptx.*page-002\.png.*1200001 bytes.*1200000 bytes.*encoder unavailable",
-                ):
+                    r"sample\.pptx.*page-002\.png.*500000 bytes.*JPEG remains \d+ bytes above.*minimum quality 80",
+                ) as caught:
                     build_imagesgallery(args)
 
             gallery_dir = out_dir / "sample" / "imagesgallery"
             self.assertFalse((gallery_dir / "imagesgallery.json").exists())
             self.assertFalse(gallery_dir.exists())
-            self.assertEqual(2, save_calls)
+            self.assertIn(f"{len(second_page_bytes)} bytes", str(caught.exception))
             self.assertEqual("source-ppt", ppt_path.read_bytes().decode())
 
     def test_documented_batch_loop_continues_after_failed_builder_and_summarizes(self):
@@ -344,8 +436,8 @@ class TestBuildImagesGallery(unittest.TestCase):
             self.assertEqual("incomplete", summary["status"])
             self.assertEqual("failed.pptx", failure["deck"])
             self.assertIn("failed.pptx", failure["reason"])
-            self.assertIn("1200001 bytes", failure["reason"])
-            self.assertIn("1200000 bytes", failure["reason"])
+            self.assertIn("500001 bytes", failure["reason"])
+            self.assertIn("500000 bytes", failure["reason"])
             self.assertIn("encoder unavailable", failure["reason"])
             self.assertFalse((out_dir / "failed" / "imagesgallery").exists())
             later_manifest_path = out_dir / "later" / "imagesgallery" / "imagesgallery.json"

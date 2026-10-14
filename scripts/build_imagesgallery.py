@@ -16,7 +16,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 
 VERSION = "1.0"
-MAX_PAGE_IMAGE_BYTES = 1_200_000
+MAX_PAGE_IMAGE_BYTES = 500_000
+MAX_PAGE_IMAGE_DIMENSION = 2560
 # 80 is a hard encoding floor, not an automated legibility guarantee.
 JPEG_QUALITIES = (95, 90, 85, 80)
 PAGINATION_LINE_RE = re.compile(
@@ -104,17 +105,25 @@ def _compress_page_image(image_path: Path) -> Path:
             rgb = Image.new("RGB", rgba.size, "white")
             rgb.paste(rgba, mask=rgba.getchannel("A"))
 
+            long_edge = max(rgb.size)
+            if long_edge > MAX_PAGE_IMAGE_DIMENSION:
+                scale = MAX_PAGE_IMAGE_DIMENSION / long_edge
+                target_size = tuple(max(1, round(dimension * scale)) for dimension in rgb.size)
+                rgb = rgb.resize(target_size, Image.Resampling.LANCZOS)
+
             with tempfile.TemporaryDirectory(prefix="ppt-page-image-") as tmp:
                 encoded_path = Path(tmp) / "page.jpg"
                 for quality in JPEG_QUALITIES:
                     rgb.save(encoded_path, format="JPEG", quality=quality, optimize=True, progressive=True)
-                    if encoded_path.stat().st_size <= MAX_PAGE_IMAGE_BYTES:
+                    encoded_size = encoded_path.stat().st_size
+                    if encoded_size <= MAX_PAGE_IMAGE_BYTES:
                         encoded_path.replace(jpg_path)
                         image_path.unlink()
                         return jpg_path
 
         raise RuntimeError(
-            f"JPEG remains above {MAX_PAGE_IMAGE_BYTES} bytes at the minimum quality {JPEG_QUALITIES[-1]}"
+            f"JPEG remains {encoded_size} bytes above the {MAX_PAGE_IMAGE_BYTES}-byte limit "
+            f"at the minimum quality {JPEG_QUALITIES[-1]}"
         )
     except Exception:
         jpg_path.unlink(missing_ok=True)
