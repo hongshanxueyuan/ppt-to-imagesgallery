@@ -64,6 +64,7 @@ class TestPlanBatchJobs(unittest.TestCase):
                     _section("1.3", "1.3 课程C", 3, ["## C1\n\n第一页", "## C2\n\n第二页", "## C3\n\n第三页"]),
                 ]
             }
+            section_list["sections"][0]["block_type"] = "html"
             (root / "section-list.json").write_text(json.dumps(section_list, ensure_ascii=False), encoding="utf-8")
 
             observed_counts = {
@@ -90,6 +91,7 @@ class TestPlanBatchJobs(unittest.TestCase):
         self.assertEqual(1, len(plan["shards"][1]["jobs"]))
         first_job = plan["jobs"][0]
         self.assertEqual(2, first_job["page_count"])
+        self.assertEqual("html", first_job["block_type"])
         self.assertEqual("## A1\n\n第一页", first_job["page_content"][0])
         self.assertTrue(first_job["ppt"].endswith("1.1 课程A_水印版.pptx"))
         self.assertEqual(1, len(plan["ignored_report_json"]))

@@ -131,6 +131,7 @@ def _load_section_list_entries(section_list_path: Path) -> List[Dict[str, Any]]:
                 "section_title": str(entry.get("section_title", "")).strip(),
                 "resource_title": str(entry.get("resource_title", "")).strip(),
                 "output_name": str(entry.get("output_name", "")).strip(),
+                "block_type": str(entry.get("block_type", "")).strip(),
                 "page_count": entry.get("page_count"),
                 "page_content": entry.get("page_content"),
             }
@@ -606,6 +607,7 @@ def _build_job(section_index: int, section: Mapping[str, Any], ppt_path: Path, o
         "section_title": str(section.get("section_title", "")),
         "resource_title": str(section.get("resource_title", "")),
         "output_name": str(section.get("output_name", "")),
+        "block_type": str(section.get("block_type", "")).strip(),
         "page_count": section.get("page_count"),
         "page_content": page_content,
     }
