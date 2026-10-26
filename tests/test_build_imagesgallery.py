@@ -84,6 +84,17 @@ class TestBuildImagesGallery(unittest.TestCase):
                 }
             )
 
+    def test_validate_section_payload_rejects_content_that_cleans_to_blank(self):
+        with self.assertRaisesRegex(ValueError, "page_content\\[1\\] must not be blank"):
+            validate_section_payload(
+                {
+                    "section_id": "1.1",
+                    "section_title": "1.1 课程A",
+                    "page_count": 1,
+                    "page_content": ["<script>not spoken</script>&nbsp;<br><!-- hidden -->"],
+                }
+            )
+
     def test_build_page_image_name_uses_prefix_and_timestamp_suffix(self):
         prefix = _build_image_name_prefix("1.3 流程智能体与普通AI助手的区别_水印版")
         self.assertRegex(prefix, r"^[a-z0-9-]+$")
@@ -150,6 +161,68 @@ class TestBuildImagesGallery(unittest.TestCase):
         self.assertEqual("## 第一页\n\n第一页正文", manifest["items"][0]["speech"])
         self.assertEqual("## 第二页\n\n第二页正文", manifest["items"][1]["speech"])
         self.assertRegex(manifest["items"][0]["image"], r"images/.+__page-001__\d{8}-\d{6}-\d{3}\.png")
+
+    def test_build_imagesgallery_cleans_html_from_speech_and_preserves_source_json(self):
+        raw_page = (
+            "## 标题\n\n"
+            "<p>Tom &amp;amp; Jerry &#39; &#x4e2d;&#x6587;</p>"
+            "<br><span>实体标签&nbsp;&nbsp;正文</span>"
+            "<div>第二段</div>"
+            "<custom-tag data-note='hidden'>自定义正文</custom-tag>"
+            "&lt;strong&gt;转义标签正文&lt;/strong&gt;"
+            "&amp;lt;em&amp;gt;双重转义标签&amp;lt;/em&amp;gt;"
+            "<!-- 不读注释 -->"
+            "<script>console.log('不读脚本')</script>"
+            "<style>.x { color: red; }</style>"
+            "a < b &unknown; &broken <unknown"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            ppt_path = tmp_path / "sample.pptx"
+            section_json_path = tmp_path / "section.json"
+            out_dir = tmp_path / "out"
+            source_section = {
+                "section_id": "1.2",
+                "section_title": "1.2 课程A",
+                "resource_title": "1.2 课程A",
+                "output_name": "1.2 课程A.pptx",
+                "page_count": 1,
+                "page_content": [raw_page],
+            }
+            ppt_path.write_bytes(b"fake-ppt")
+            section_json_path.write_text(json.dumps(source_section, ensure_ascii=False), encoding="utf-8")
+
+            def fake_convert(_ppt_path, images_dir, image_name_prefix="", image_name_timestamp="", **kwargs):
+                image_path = images_dir / f"{image_name_prefix}__page-001__{image_name_timestamp}.png"
+                image_path.write_bytes(b"fake-image")
+                return [image_path]
+
+            args = argparse.Namespace(
+                ppt=str(ppt_path),
+                section_json=str(section_json_path),
+                out=str(out_dir),
+                dry_run=True,
+            )
+            with patch("build_imagesgallery.resolve_bin", return_value="fake-bin"), patch(
+                "build_imagesgallery.convert_ppt_to_images", side_effect=fake_convert
+            ):
+                manifest = build_imagesgallery(args)
+
+            source_after_build = json.loads(section_json_path.read_text(encoding="utf-8"))
+
+        speech = manifest["items"][0]["speech"]
+        self.assertEqual(
+            "## 标题\n\n"
+            "Tom & Jerry ' 中文\n"
+            "实体标签 正文\n"
+            "第二段\n"
+            "自定义正文转义标签正文双重转义标签\n"
+            "a < b &unknown; &broken <unknown",
+            speech,
+        )
+        self.assertNotIn("amp", speech)
+        self.assertNotIn("nbsp", speech)
+        self.assertEqual(source_section, source_after_build)
 
     def test_builder_leaves_page_images_at_or_below_limit_unchanged(self):
         for size in (MAX_IMAGE_BYTES - 1, MAX_IMAGE_BYTES):

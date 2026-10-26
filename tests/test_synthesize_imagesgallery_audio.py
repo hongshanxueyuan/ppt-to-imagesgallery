@@ -163,6 +163,43 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
         self.assertEqual(0, rewritten["items"][0]["start"])
         self.assertEqual("images/page-001.jpg", rewritten["items"][0]["image"])
 
+    def test_build_audio_sends_cleaned_manifest_speech_to_tts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            manifest_path = tmp_path / "imagesgallery.json"
+            preview_path = tmp_path / "audio" / "preview.html"
+            _write_manifest(
+                manifest_path,
+                [
+                    {
+                        "page_number": 1,
+                        "image": "images/page-001.png",
+                        "speech": "## 标题\n\nTom & Jerry\n\nA < B",
+                    }
+                ],
+            )
+
+            synth_commands: list[list[str]] = []
+            tts_texts: list[str] = []
+            fake_run_cmd, fake_build_preview_html = _build_fake_audio_pipeline(preview_path, synth_commands)
+
+            def capture_tts_text(cmd: list[str]) -> None:
+                if cmd[:3] == ["fake-bl", "speech", "synthesize"]:
+                    text_path = Path(cmd[cmd.index("--text-file") + 1])
+                    tts_texts.append(text_path.read_text(encoding="utf-8"))
+                fake_run_cmd(cmd)
+
+            args = parse_args(["--manifest", str(manifest_path)])
+            with patch("synthesize_imagesgallery_audio.resolve_bin", side_effect=lambda name: f"fake-{name}"), patch(
+                "synthesize_imagesgallery_audio.run_cmd", side_effect=capture_tts_text
+            ), patch("synthesize_imagesgallery_audio.ffprobe_duration", return_value=1.5), patch(
+                "synthesize_imagesgallery_audio.build_preview_html", side_effect=fake_build_preview_html
+            ):
+                build_audio(args)
+
+        self.assertEqual(["标题\n\nTom & Jerry\n\nA < B"], tts_texts)
+        self.assertEqual(1, len(synth_commands))
+
     def test_parse_args_leaves_run_voice_source_unset_until_resolution(self):
         args = parse_args(["--manifest", "sample.json"])
         self.assertEqual("", args.voice)

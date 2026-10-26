@@ -14,6 +14,8 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
+from clean_page_content import clean_page_content
+
 
 VERSION = "1.0"
 MAX_PAGE_IMAGE_BYTES = 500_000
@@ -306,10 +308,11 @@ def validate_section_payload(section: Mapping[str, Any]) -> Dict[str, Any]:
     for index, page in enumerate(raw_page_content, start=1):
         if not isinstance(page, str):
             raise ValueError(f"page_content[{index}] must be a string")
-        normalized = _strip_page_markers(page).strip()
+        cleaned_page = clean_page_content(page)
+        normalized = _strip_page_markers(cleaned_page).strip()
         if not normalized:
             raise ValueError(f"page_content[{index}] must not be blank")
-        page_content.append(page.strip())
+        page_content.append(cleaned_page)
 
     return {
         "section_id": str(section.get("section_id", "")).strip(),
