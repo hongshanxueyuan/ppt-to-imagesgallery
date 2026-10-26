@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 from urllib.parse import urlparse
 
 from build_imagesgallery import count_presentation_pages
+from clean_page_content import clean_page_content
 
 
 PRESENTATION_SUFFIXES = (".pptx", ".ppt")
@@ -587,6 +588,12 @@ def _discover_local_presentations(root: Path, recursive: bool) -> Tuple[List[Pat
 
 def _build_job(section_index: int, section: Mapping[str, Any], ppt_path: Path, out_base: Path) -> Dict[str, Any]:
     gallery_dir = out_base / ppt_path.stem / "imagesgallery"
+    raw_page_content = section.get("page_content")
+    page_content = (
+        [clean_page_content(page) if isinstance(page, str) else page for page in raw_page_content]
+        if isinstance(raw_page_content, list)
+        else raw_page_content
+    )
     return {
         "name": ppt_path.stem,
         "ppt": str(ppt_path),
@@ -600,7 +607,7 @@ def _build_job(section_index: int, section: Mapping[str, Any], ppt_path: Path, o
         "resource_title": str(section.get("resource_title", "")),
         "output_name": str(section.get("output_name", "")),
         "page_count": section.get("page_count"),
-        "page_content": section.get("page_content"),
+        "page_content": page_content,
     }
 
 

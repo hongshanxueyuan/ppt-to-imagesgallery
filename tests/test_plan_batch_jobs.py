@@ -280,6 +280,30 @@ class TestPlanBatchJobs(unittest.TestCase):
         self.assertIn("blank_page_content", codes)
         self.assertEqual([], plan["shards"])
 
+    def test_preflight_rejects_page_content_that_becomes_blank_after_html_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "1.1 课程A_水印版.pptx").write_text("ppt", encoding="utf-8")
+            raw_page = "&nbsp;<br><script>not spoken</script><!-- hidden -->"
+            section_list = {
+                "sections": [
+                    _section("1.1", "1.1 课程A", 1, [raw_page]),
+                ]
+            }
+            section_list_path = root / "section-list.json"
+            section_list_path.write_text(json.dumps(section_list, ensure_ascii=False), encoding="utf-8")
+
+            with patch("plan_batch_jobs.count_presentation_pages", return_value=1):
+                plan = discover_batch_jobs(root)
+
+            source_after_preflight = json.loads(section_list_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(plan["admission_ready"])
+        self.assertEqual("failed", plan["preflight"]["status"])
+        self.assertEqual("blank_page_content", plan["preflight"]["failures"][0]["code"])
+        self.assertEqual([""], plan["jobs"][0]["page_content"])
+        self.assertEqual(section_list, source_after_preflight)
+
     def test_discover_batch_jobs_derives_studio_vertical_routes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
