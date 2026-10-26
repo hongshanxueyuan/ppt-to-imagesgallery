@@ -104,6 +104,7 @@ python scripts/plan_batch_jobs.py --root <folder> --shards 3
 - manifest 的 `items[].image` 始终指向最终 PNG 或 JPG；音频阶段会保留这个路径。
 - stage-A `items[].speech` 直接来自 `page_content`。
 - manifest 顶层保留 `section_id` 和 `section_title`，并在来源记录提供时写入 `block_type`；音频阶段会原样保留这些来源字段。
+- 修改这些来源字段时，也检查 Studio 发布器的[来源回查与消费逻辑](https://github.com/hongshanxueyuan/studio-imagegallery-publish/blob/master/scripts/publish_imagegallery_block.py)及其[操作合同](https://github.com/hongshanxueyuan/studio-imagegallery-publish/blob/master/SKILL.md)。
 - 旧的 manuscript-path 字段已经从 manifest 合同里移除。
 
 命令接口:
