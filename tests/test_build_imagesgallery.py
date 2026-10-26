@@ -118,6 +118,7 @@ class TestBuildImagesGallery(unittest.TestCase):
                         "section_title": "1.2 课程A",
                         "resource_title": "1.2 课程A",
                         "output_name": "1.2 课程A.pptx",
+                        "block_type": "html",
                         "page_count": 2,
                         "page_content": ["## 第一页\n\n第一页正文", "## 第二页\n\n第二页正文"],
                     },
@@ -156,6 +157,9 @@ class TestBuildImagesGallery(unittest.TestCase):
 
         self.assertEqual("1.0", manifest["version"])
         self.assertEqual(str(ppt_path.resolve()), manifest["source_ppt"])
+        self.assertEqual("html", manifest["block_type"])
+        self.assertEqual("1.2", manifest["section_id"])
+        self.assertEqual("1.2 课程A", manifest["section_title"])
         self.assertNotIn("source_speech", manifest)
         self.assertEqual(2, len(manifest["items"]))
         self.assertEqual("## 第一页\n\n第一页正文", manifest["items"][0]["speech"])
@@ -223,6 +227,7 @@ class TestBuildImagesGallery(unittest.TestCase):
         self.assertNotIn("amp", speech)
         self.assertNotIn("nbsp", speech)
         self.assertEqual(source_section, source_after_build)
+        self.assertNotIn("block_type", manifest)
 
     def test_builder_leaves_page_images_at_or_below_limit_unchanged(self):
         for size in (MAX_IMAGE_BYTES - 1, MAX_IMAGE_BYTES):

@@ -319,6 +319,7 @@ def validate_section_payload(section: Mapping[str, Any]) -> Dict[str, Any]:
         "section_title": str(section.get("section_title", "")).strip(),
         "resource_title": str(section.get("resource_title", "")).strip(),
         "output_name": str(section.get("output_name", "")).strip(),
+        "block_type": str(section.get("block_type", "")).strip(),
         "page_count": page_count,
         "page_content": page_content,
     }
@@ -426,8 +427,12 @@ def build_imagesgallery(args: argparse.Namespace) -> Dict[str, object]:
     manifest = {
         "version": VERSION,
         "source_ppt": str(ppt_path),
+        "section_id": section["section_id"],
+        "section_title": section["section_title"],
         "items": items,
     }
+    if section["block_type"]:
+        manifest["block_type"] = section["block_type"]
     manifest_path = gallery_dir / "imagesgallery.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest

@@ -97,6 +97,8 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
                         "version": "1.0",
                         "source_ppt": str(tmp_path / "sample.pptx"),
                         "section_id": "1.2",
+                        "section_title": "1.2 课程A",
+                        "block_type": "html",
                         "items": [
                             {
                                 "page_number": 1,
@@ -156,6 +158,8 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
             rewritten = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         self.assertEqual("1.2", rewritten["section_id"])
+        self.assertEqual("1.2 课程A", rewritten["section_title"])
+        self.assertEqual("html", rewritten["block_type"])
         self.assertNotIn("source_speech", rewritten)
         self.assertIn("audio", rewritten)
         self.assertEqual(1, len(rewritten["items"]))

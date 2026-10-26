@@ -103,6 +103,7 @@ python scripts/plan_batch_jobs.py --root <folder> --shards 3
 - 80 是允许的最低编码质量，不是可读性检测或可读保证；如果质量 80 仍超限，构建会失败并说明 deck、页图、源文件大小、JPEG 结果大小、目标上限和原因。失败时整个 deck 的 gallery 会清理，不会留下 manifest 或部分页图。
 - manifest 的 `items[].image` 始终指向最终 PNG 或 JPG；音频阶段会保留这个路径。
 - stage-A `items[].speech` 直接来自 `page_content`。
+- manifest 顶层保留 `section_id` 和 `section_title`，并在来源记录提供时写入 `block_type`；音频阶段会原样保留这些来源字段。
 - 旧的 manuscript-path 字段已经从 manifest 合同里移除。
 
 命令接口:
@@ -119,7 +120,7 @@ python scripts/build_imagesgallery.py \
 
 - `page_count`
 - `page_content`
-- 建议保留 `section_id` / `section_title` / `output_name`
+- 建议保留 `section_id` / `section_title` / `output_name` / `block_type`
 
 ## 预检 Preflight
 
