@@ -314,8 +314,14 @@ class TestPlanBatchJobs(unittest.TestCase):
 
             section_list = {
                 "sections": [
-                    _section("1.2", "1.2 课程A", 2, ["## A1", "## A2"]),
-                    _section("1.3", "1.3 课程B", 1, ["## B1"]),
+                    {
+                        **_section("1.2", "1.2 课程A", 2, ["## A1", "## A2"]),
+                        "block_type": "html",
+                    },
+                    {
+                        **_section("1.3", "1.3 课程B", 1, ["## B1"]),
+                        "block_type": "imagesgallery",
+                    },
                 ]
             }
             (root / "section-list.json").write_text(json.dumps(section_list, ensure_ascii=False), encoding="utf-8")
@@ -413,9 +419,29 @@ class TestPlanBatchJobs(unittest.TestCase):
         self.assertEqual(STUDIO_TARGETS_FILENAME, targets_path.name)
         self.assertEqual(str(targets_path), payload["targets_file"])
         self.assertEqual(2, len(payload["targets"]))
+        targets_by_section = {target["section_id"]: target for target in payload["targets"]}
+        self.assertEqual("html", targets_by_section["1.2"]["block_type"])
+        self.assertEqual("imagesgallery", targets_by_section["1.3"]["block_type"])
         self.assertTrue(payload["course_id_verified"])
         self.assertFalse(payload["course_id_remapped"])
         self.assertEqual("exact_match", payload["route_mode"])
+
+    def test_studio_target_json_preserves_missing_block_type_as_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            targets_path = write_studio_targets_file(
+                {
+                    "out_base": str(root),
+                    "jobs": [{"section_id": "1.4", "section_title": "1.4 课程C"}],
+                    "studio_publish": {
+                        "studio_course_url": "https://studio.example.com/course/course-v1:ORG+COURSE+RUN"
+                    },
+                },
+                output_path=root / "targets.json",
+            )
+            payload = json.loads(targets_path.read_text(encoding="utf-8"))
+
+        self.assertEqual("", payload["targets"][0]["block_type"])
 
     def test_discover_batch_jobs_stops_on_studio_course_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:

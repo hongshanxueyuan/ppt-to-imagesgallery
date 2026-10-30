@@ -204,6 +204,7 @@ python scripts/plan_batch_jobs.py \
 
 - 课程 URL 和 `fira_course-*.json` 的 course id 不匹配时，整个批量流程硬停。
 - 只有用户明确确认“这是导入课程副本”时，才允许 `--allow-course-id-remap`。
+- 每个 Studio target 都保留对应 section 的本地 `block_type`；缺失值写为空字符串，由发布器按目标报告，不能根据 Studio 现状推断。
 - 本地生成阶段最多 3 个并行 shard。
 - 最终 Studio 推送必须顺序执行。
 - 收尾时始终返回目标 vertical 的可点击 Studio URL。

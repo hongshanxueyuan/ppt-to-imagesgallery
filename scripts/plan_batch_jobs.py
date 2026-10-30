@@ -494,6 +494,7 @@ def build_studio_targets_payload(plan: Dict[str, Any]) -> Dict[str, Any]:
             "name": job.get("name", ""),
             "section_id": job.get("section_id", ""),
             "section_title": job.get("section_title", ""),
+            "block_type": job.get("block_type", ""),
             "ppt": job.get("ppt", ""),
             "manifest": job.get("manifest", ""),
             "route_mode": job.get("route_mode", ""),
