@@ -52,6 +52,7 @@ BLOCK_TAGS = {
 HIDDEN_TAGS = {"script", "style"}
 HORIZONTAL_WHITESPACE_RE = re.compile(r"[^\S\n]+")
 INCOMPLETE_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9:_-]*(?:\s[^<>]*)?$")
+BLOCKQUOTE_PREFIX_RE = re.compile(r"(?m)^ {0,3}(?:>[ ]*)+")
 
 
 class _VisibleTextParser(HTMLParser):
@@ -92,7 +93,7 @@ class _VisibleTextParser(HTMLParser):
 
 
 def clean_page_content(text: str) -> str:
-    """Decode HTML character references and remove markup from page speech."""
+    """Decode HTML, remove markup, and strip line-leading blockquote prefixes."""
     decoded = text
     while True:
         next_decoded = unescape(decoded)
@@ -109,5 +110,6 @@ def clean_page_content(text: str) -> str:
     if not parser.hidden_tag and INCOMPLETE_TAG_RE.fullmatch(incomplete_tag):
         visible_text += incomplete_tag
     visible_text = visible_text.replace("\r\n", "\n").replace("\r", "\n").replace("\u00a0", " ")
+    visible_text = BLOCKQUOTE_PREFIX_RE.sub("", visible_text)
     lines = [HORIZONTAL_WHITESPACE_RE.sub(" ", line).strip() for line in visible_text.split("\n")]
     return "\n".join(lines).strip()

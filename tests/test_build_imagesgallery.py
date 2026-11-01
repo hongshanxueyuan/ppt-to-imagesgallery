@@ -229,6 +229,55 @@ class TestBuildImagesGallery(unittest.TestCase):
         self.assertEqual(source_section, source_after_build)
         self.assertNotIn("block_type", manifest)
 
+    def test_build_imagesgallery_removes_only_line_leading_blockquote_prefixes(self):
+        raw_page = (
+            "> 单层引用正文\n"
+            ">>> 多层引用正文\n"
+            "   > > 三空格缩进\n"
+            "    > 四空格不清理\n"
+            "A > B 行内比较\n"
+            "> ## **引用中的 Markdown**"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            ppt_path = tmp_path / "sample.pptx"
+            section_json_path = tmp_path / "section.json"
+            out_dir = tmp_path / "out"
+            source_section = {
+                "section_id": "1.2",
+                "section_title": "1.2 课程A",
+                "resource_title": "1.2 课程A",
+                "output_name": "1.2 课程A.pptx",
+                "page_count": 1,
+                "page_content": [raw_page],
+            }
+            ppt_path.write_bytes(b"fake-ppt")
+            section_json_path.write_text(json.dumps(source_section, ensure_ascii=False), encoding="utf-8")
+
+            def fake_convert(_ppt_path, images_dir, image_name_prefix="", image_name_timestamp="", **kwargs):
+                image_path = images_dir / f"{image_name_prefix}__page-001__{image_name_timestamp}.png"
+                image_path.write_bytes(b"fake-image")
+                return [image_path]
+
+            args = argparse.Namespace(
+                ppt=str(ppt_path),
+                section_json=str(section_json_path),
+                out=str(out_dir),
+                dry_run=True,
+            )
+            with patch("build_imagesgallery.resolve_bin", return_value="fake-bin"), patch(
+                "build_imagesgallery.convert_ppt_to_images", side_effect=fake_convert
+            ):
+                manifest = build_imagesgallery(args)
+
+            source_after_build = json.loads(section_json_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            "单层引用正文\n多层引用正文\n三空格缩进\n> 四空格不清理\nA > B 行内比较\n## **引用中的 Markdown**",
+            manifest["items"][0]["speech"],
+        )
+        self.assertEqual(source_section, source_after_build)
+
     def test_builder_leaves_page_images_at_or_below_limit_unchanged(self):
         for size in (MAX_IMAGE_BYTES - 1, MAX_IMAGE_BYTES):
             with self.subTest(size=size), tempfile.TemporaryDirectory() as tmp:

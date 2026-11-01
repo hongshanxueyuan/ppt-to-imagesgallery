@@ -10,6 +10,7 @@ SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from build_imagesgallery import build_imagesgallery  # noqa: E402
 from synthesize_imagesgallery_audio import (  # noqa: E402
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_RATE,
@@ -170,17 +171,45 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
     def test_build_audio_sends_cleaned_manifest_speech_to_tts(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            manifest_path = tmp_path / "imagesgallery.json"
+            ppt_path = tmp_path / "sample.pptx"
+            section_json_path = tmp_path / "section.json"
+            out_dir = tmp_path / "out"
             preview_path = tmp_path / "audio" / "preview.html"
-            _write_manifest(
-                manifest_path,
-                [
+            ppt_path.write_bytes(b"fake-ppt")
+            section_json_path.write_text(
+                json.dumps(
                     {
-                        "page_number": 1,
-                        "image": "images/page-001.png",
-                        "speech": "## 标题\n\nTom & Jerry\n\nA < B",
-                    }
-                ],
+                        "section_id": "1.2",
+                        "section_title": "1.2 课程A",
+                        "output_name": "1.2 课程A.pptx",
+                        "page_count": 1,
+                        "page_content": ["## 标题\n\nTom & Jerry\n\n>> 引用正文\nA < B\nA > B"],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_convert(_ppt_path, images_dir, image_name_prefix="", image_name_timestamp="", **kwargs):
+                image_path = images_dir / f"{image_name_prefix}__page-001__{image_name_timestamp}.png"
+                image_path.write_bytes(b"fake-image")
+                return [image_path]
+
+            build_args = argparse.Namespace(
+                ppt=str(ppt_path),
+                section_json=str(section_json_path),
+                out=str(out_dir),
+                dry_run=True,
+            )
+            with patch("build_imagesgallery.resolve_bin", return_value="fake-bin"), patch(
+                "build_imagesgallery.convert_ppt_to_images", side_effect=fake_convert
+            ):
+                stage_a_manifest = build_imagesgallery(build_args)
+
+            manifest_path = out_dir / "sample" / "imagesgallery" / "imagesgallery.json"
+            self.assertEqual(
+                "## 标题\n\nTom & Jerry\n\n引用正文\nA < B\nA > B",
+                stage_a_manifest["items"][0]["speech"],
             )
 
             synth_commands: list[list[str]] = []
@@ -200,8 +229,11 @@ class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
                 "synthesize_imagesgallery_audio.build_preview_html", side_effect=fake_build_preview_html
             ):
                 build_audio(args)
+            rewritten = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(["标题\n\nTom & Jerry\n\nA < B"], tts_texts)
+        self.assertEqual(["标题\n\nTom & Jerry\n\n引用正文\nA < B\nA > B"], tts_texts)
+        self.assertEqual("## 标题\n\nTom & Jerry\n\n引用正文\nA < B\nA > B", rewritten["items"][0]["subtitle"])
+        self.assertNotIn("\n>", rewritten["items"][0]["subtitle"])
         self.assertEqual(1, len(synth_commands))
 
     def test_parse_args_leaves_run_voice_source_unset_until_resolution(self):
