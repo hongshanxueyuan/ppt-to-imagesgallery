@@ -229,14 +229,21 @@ class TestBuildImagesGallery(unittest.TestCase):
         self.assertEqual(source_section, source_after_build)
         self.assertNotIn("block_type", manifest)
 
-    def test_build_imagesgallery_removes_only_line_leading_blockquote_prefixes(self):
+    def test_build_imagesgallery_removes_only_line_leading_literal_and_entity_blockquote_prefixes(self):
         raw_page = (
             "> 单层引用正文\n"
             ">>> 多层引用正文\n"
             "   > > 三空格缩进\n"
             "    > 四空格不清理\n"
             "A > B 行内比较\n"
-            "> ## **引用中的 Markdown**"
+            "> ## **引用中的 Markdown**\n"
+            "&gt; 分号实体引用正文\n"
+            "&gt 无分号实体引用正文\n"
+            "&gt;&gt; 嵌套分号实体引用正文\n"
+            "&gt&gt 无分号嵌套实体引用正文\n"
+            "   &gt;   三空格缩进实体引用\n"
+            "    &gt; 四空格缩进实体不清理\n"
+            "A &gt; B 行内实体比较"
         )
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -271,11 +278,17 @@ class TestBuildImagesGallery(unittest.TestCase):
                 manifest = build_imagesgallery(args)
 
             source_after_build = json.loads(section_json_path.read_text(encoding="utf-8"))
+            manifest_path = out_dir / "sample" / "imagesgallery" / "imagesgallery.json"
+            saved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         self.assertEqual(
-            "单层引用正文\n多层引用正文\n三空格缩进\n> 四空格不清理\nA > B 行内比较\n## **引用中的 Markdown**",
+            "单层引用正文\n多层引用正文\n三空格缩进\n> 四空格不清理\nA > B 行内比较\n"
+            "## **引用中的 Markdown**\n分号实体引用正文\n无分号实体引用正文\n"
+            "嵌套分号实体引用正文\n无分号嵌套实体引用正文\n三空格缩进实体引用\n"
+            "> 四空格缩进实体不清理\nA > B 行内实体比较",
             manifest["items"][0]["speech"],
         )
+        self.assertEqual(manifest["items"][0]["speech"], saved_manifest["items"][0]["speech"])
         self.assertEqual(source_section, source_after_build)
 
     def test_builder_leaves_page_images_at_or_below_limit_unchanged(self):
