@@ -211,6 +211,7 @@ python scripts/plan_batch_jobs.py \
 
 ## References
 
+- `references/GLOSSARY.md`: 领域词汇与稳定术语；涉及图片集页文或 Markdown 引用前缀时读取
 - `references/preflight_repair.md`: 仅在 preflight failed 时读取
 - `references/windows_troubleshooting.md`: 仅在 Windows 环境或工具链异常时读取
 - `references/preview_template.html`: preview 生成模板，不用手改
