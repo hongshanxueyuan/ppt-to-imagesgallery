@@ -67,6 +67,21 @@ def _decode_entities(text: str) -> str:
         decoded = next_decoded
 
 
+class _HtmlBlockContext(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in (BLOCK_TAGS | HIDDEN_TAGS) - {"hr"}:
+            self.blocks.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.blocks:
+            index = len(self.blocks) - 1 - self.blocks[::-1].index(tag)
+            del self.blocks[index:]
+
+
 def _protect_markdown_code(text: str) -> tuple[str, dict[str, str]]:
     decoded = _decode_entities(text)
     # The sentinel must remain absent even after entity decoding and HTML tag removal.
@@ -84,12 +99,14 @@ def _protect_markdown_code(text: str) -> tuple[str, dict[str, str]]:
     indented_code = False
     previous_blank = True
     lists = []
+    html_context = _HtmlBlockContext()
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         marker = FENCE_RE.match(line)
         list_item = LIST_ITEM_RE.match(line)
         indent = len(line) - len(line.lstrip(" ")) if not line.startswith("\t") else 4
         code_indent = lists[-1][1] + 4 if lists else 4
-        html_line = re.match(r"^[ \t]*(?:</?[A-Za-z][\w:.-]*(?:\s|/?>)|<!--)", _decode_entities(line))
+        tag = re.match(r"^[ \t]*</?([A-Za-z][\w:.-]*)(?:\s|/?>)", _decode_entities(line))
+        html_line = bool(html_context.blocks or (tag and tag.group(1).lower() in BLOCK_TAGS | HIDDEN_TAGS))
         if fence is not None:
             lines.append(protect(line))
             if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) and not line[marker.end():].strip():
@@ -114,7 +131,11 @@ def _protect_markdown_code(text: str) -> tuple[str, dict[str, str]]:
                 lists.append((item_indent, len(line[:list_item.end()].replace("\t", "    "))))
             elif lists and indent <= lists[0][0]:
                 lists = []
-            lines.append(INLINE_CODE_RE.sub(lambda match: protect(match.group(0)), line))
+            visible_line = INLINE_CODE_RE.sub(lambda match: protect(match.group(0)), line)
+            if html_context.blocks and re.search(r"</?[A-Za-z]", _decode_entities(visible_line)):
+                visible_line = visible_line.lstrip(" \t")
+            lines.append(visible_line)
+            html_context.feed(_decode_entities(visible_line) + "\n")
         previous_blank = not line.strip()
     return "\n".join(lines), protected
 
