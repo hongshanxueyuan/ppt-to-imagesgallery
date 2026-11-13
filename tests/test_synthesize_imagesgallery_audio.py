@@ -95,7 +95,7 @@ process.stdout.write(nodes.subtitleText.innerHTML);
 
     def test_html_blocks_are_cleaned_but_fenced_html_code_is_preserved(self):
         page = ('<div>\n    <p>第一段</p>\n\n    <script>不该读的脚本</script>\n'
-                '    <p>第二段</p>\n</div>\n\n    &amp;lt;script&amp;gt;编码脚本&amp;lt;/script&amp;gt;'
+                '    <p>第二段</p>\n\n    &amp;lt;script&amp;gt;编码脚本&amp;lt;/script&amp;gt;\n</div>'
                 '\n\n```html\n<script>示例代码</script>\n```')
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -118,6 +118,33 @@ process.stdout.write(nodes.subtitleText.innerHTML);
             self.assertNotIn('编码脚本', cleaned)
             self.assertIn('```html\n<script>示例代码</script>\n```', cleaned)
             self.assertTrue(all(line == '' for line in cleaned.splitlines() if not line.strip()))
+
+    def test_indented_html_examples_remain_code_while_plain_html_is_cleaned(self):
+        examples = [
+            '    &lt;p&gt;代码段落&lt;/p&gt;',
+            '    &amp;lt;div&amp;gt;编码示例&amp;lt;/div&amp;gt;',
+            '    &lt;script&gt;编码代码&lt;/script&gt;',
+            '    <div>原始代码</div>',
+            '    <script>原始代码脚本</script>',
+        ]
+        page = '\n\n'.join(examples) + '\n\n<p>普通正文</p>\n<script>不读正文脚本</script>'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ppt = root / '1.2 示例.pptx'
+            ppt.write_bytes(b'fake-ppt')
+            (root / 'section-list.json').write_text(json.dumps({'sections': [{
+                'section_id': '1.2', 'section_title': '1.2 示例', 'output_name': ppt.name,
+                'page_count': 1, 'page_content': [page],
+            }]}, ensure_ascii=False), encoding='utf8')
+            with patch('plan_batch_jobs.count_presentation_pages', return_value=1):
+                plan = discover_batch_jobs(root)
+            self.assertTrue(plan['admission_ready'])
+            cleaned = plan['jobs'][0]['page_content'][0]
+            for example in examples:
+                self.assertIn(example, cleaned)
+            self.assertIn('普通正文', cleaned)
+            self.assertNotIn('<p>普通正文</p>', cleaned)
+            self.assertNotIn('不读正文脚本', cleaned)
 
     def test_html_inside_block_is_cleaned_while_indented_code_keeps_encoded_span(self):
         page = ('    &lt;span&gt;代码示例&lt;/span&gt;\n\n<div>\n    <p>第一段</p>\n\n'
