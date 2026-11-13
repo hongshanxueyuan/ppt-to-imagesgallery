@@ -105,13 +105,11 @@ def _protect_markdown_code(text: str) -> tuple[str, dict[str, str]]:
         list_item = LIST_ITEM_RE.match(line)
         indent = len(line) - len(line.lstrip(" ")) if not line.startswith("\t") else 4
         code_indent = lists[-1][1] + 4 if lists else 4
-        tag = re.match(r"^[ \t]*</?([A-Za-z][\w:.-]*)(?:\s|/?>)", _decode_entities(line))
-        html_line = bool(html_context.blocks or (tag and tag.group(1).lower() in BLOCK_TAGS | HIDDEN_TAGS))
         if fence is not None:
             lines.append(protect(line))
             if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) and not line[marker.end():].strip():
                 fence = None
-        elif not html_line and indent >= code_indent and (indented_code or previous_blank):
+        elif not html_context.blocks and indent >= code_indent and (indented_code or previous_blank):
             indented_code = True
             lines.append(protect(line))
         elif marker:
