@@ -119,6 +119,27 @@ process.stdout.write(nodes.subtitleText.innerHTML);
             self.assertIn('```html\n<script>示例代码</script>\n```', cleaned)
             self.assertTrue(all(line == '' for line in cleaned.splitlines() if not line.strip()))
 
+    def test_html_inside_block_is_cleaned_while_indented_code_keeps_encoded_span(self):
+        page = ('    &lt;span&gt;代码示例&lt;/span&gt;\n\n<div>\n    <p>第一段</p>\n\n'
+                '    提示<script>不该读的脚本</script>\n    <p>第二段</p>\n</div>')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ppt = root / '1.2 示例.pptx'
+            ppt.write_bytes(b'fake-ppt')
+            (root / 'section-list.json').write_text(json.dumps({'sections': [{
+                'section_id': '1.2', 'section_title': '1.2 示例', 'output_name': ppt.name,
+                'page_count': 1, 'page_content': [page],
+            }]}, ensure_ascii=False), encoding='utf8')
+            with patch('plan_batch_jobs.count_presentation_pages', return_value=1):
+                plan = discover_batch_jobs(root)
+            self.assertTrue(plan['admission_ready'])
+            cleaned = plan['jobs'][0]['page_content'][0]
+            self.assertIn('    &lt;span&gt;代码示例&lt;/span&gt;', cleaned)
+            self.assertIn('第一段', cleaned)
+            self.assertIn('提示', cleaned.splitlines())
+            self.assertIn('第二段', cleaned)
+            self.assertNotIn('不该读的脚本', cleaned)
+
     @unittest.skipUnless(shutil.which("node"), "Node.js is needed to execute the generated preview")
     def test_generated_preview_renders_ordered_and_nested_lists_and_hard_breaks(self):
         page = ("# 指南\n\n1. 项目一\n   - 子项\n\n   - 子项二\n     - 子子项\n"
