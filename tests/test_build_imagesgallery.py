@@ -282,10 +282,10 @@ class TestBuildImagesGallery(unittest.TestCase):
             saved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         self.assertEqual(
-            "单层引用正文\n多层引用正文\n三空格缩进\n> 四空格不清理\nA > B 行内比较\n"
+            "单层引用正文\n多层引用正文\n三空格缩进\n    > 四空格不清理\nA > B 行内比较\n"
             "## **引用中的 Markdown**\n分号实体引用正文\n无分号实体引用正文\n"
             "嵌套分号实体引用正文\n无分号嵌套实体引用正文\n三空格缩进实体引用\n"
-            "> 四空格缩进实体不清理\nA > B 行内实体比较",
+            "    > 四空格缩进实体不清理\nA > B 行内实体比较",
             manifest["items"][0]["speech"],
         )
         self.assertEqual(manifest["items"][0]["speech"], saved_manifest["items"][0]["speech"])

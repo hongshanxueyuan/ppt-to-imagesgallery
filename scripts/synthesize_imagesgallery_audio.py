@@ -177,7 +177,7 @@ def clean_speech_for_tts(text: str) -> str:
 
 
 def normalize_subtitle_for_display(text: str) -> str:
-    return (text or "").strip()
+    return (text or "").strip("\r\n")
 
 
 def build_preview_html(manifest: Dict[str, object], manifest_path: Path) -> Path:
