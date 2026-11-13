@@ -1,21 +1,30 @@
 import argparse
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 import sys
 from unittest.mock import patch
 
+try:
+    from markdown_it import MarkdownIt
+except ImportError:
+    MarkdownIt = None
+
 SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from build_imagesgallery import build_imagesgallery  # noqa: E402
+from plan_batch_jobs import discover_batch_jobs  # noqa: E402
 from synthesize_imagesgallery_audio import (  # noqa: E402
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_RATE,
     DEFAULT_TTS_VOICE,
     build_audio,
+    build_preview_html,
     clean_speech_for_tts,
     normalize_subtitle_for_display,
     parse_args,
@@ -58,6 +67,97 @@ def _build_fake_audio_pipeline(preview_path: Path, synth_commands: list[list[str
 
 
 class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node.js is needed to execute the generated preview")
+    def test_generated_preview_renders_ordered_and_nested_lists_and_hard_breaks(self):
+        page = ("# 指南\n\n1. 项目一\n   - 子项\n\n   - 子项二\n     - 子子项\n"
+                "2. 项目二\n\n第一行  \n第二行\n\n```html\n> 代码 <tag>\n```\n\n    > 缩进代码")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            preview = build_preview_html({
+                "source_ppt": "sample.pptx",
+                "audio": {"full_audio": "audio.mp3"},
+                "items": [{"page": 1, "subtitle": page, "start": 0, "end": 1000}],
+            }, root / "imagesgallery.json")
+            runner = r'''
+const fs = require("fs"), vm = require("vm");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const payload = html.match(/<script id="payload" type="application\/json">([\s\S]*?)<\/script>/)[1];
+const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
+const nodes = {};
+function element() {
+  return {innerHTML:"", textContent:"", classList:{toggle(){}}, addEventListener(){}, appendChild(){}};
+}
+global.document = {
+  getElementById(id) { return nodes[id] ||= element(); },
+  createElement() { return element(); }
+};
+nodes.payload = {textContent: payload};
+vm.runInThisContext(script);
+process.stdout.write(nodes.subtitleText.innerHTML);
+'''
+            result = subprocess.run([shutil.which("node"), "-e", runner, str(preview)], capture_output=True, text=True, encoding="utf-8", check=True)
+        self.assertEqual(
+            "<h1>指南</h1><ol><li>项目一<ul><li>子项</li><li>子项二<ul><li>子子项</li></ul></li></ul></li>"
+            "<li>项目二</li></ol><p>第一行<br>第二行</p><pre><code>&gt; 代码 &lt;tag&gt;</code></pre>"
+            "<pre><code>&gt; 缩进代码</code></pre>", result.stdout
+        )
+
+    def test_subtitle_keeps_markdown_breaks_and_nested_lists_after_build_and_audio(self):
+        raw_page = (
+            "    首行代码\n\n## 层级\n\n1. 第一项\n   - 子项\n\n     - <span>子子项</span>\n2. 第二项\n\n"
+            "第一行  \n第二行\n\n```html\n> 代码示例\n  <strong>保留 &amp;</strong>\n```\n\n"
+            "    保留缩进 <tag> &amp;\n\n`<span>多个   空格</span>`\n\n正文 &#67;ODEPLACEHOLDER0END 和 &#57344;0&#57344;"
+        )
+        cleaned_page = raw_page.replace("<span>子子项</span>", "子子项").replace("&#67;", "C").replace("&#57344;", "\ue000")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ppt = root / "1.2 示例.pptx"
+            ppt.write_bytes(b"fake-ppt")
+            section_list = root / "section-list.json"
+            section_list.write_text(json.dumps({"sections": [{
+                "section_id": "1.2", "section_title": "1.2 示例", "output_name": ppt.name,
+                "page_count": 1, "page_content": [raw_page],
+            }]}, ensure_ascii=False), encoding="utf-8")
+            original_section_list = section_list.read_bytes()
+            with patch("plan_batch_jobs.count_presentation_pages", return_value=1):
+                plan = discover_batch_jobs(root)
+            self.assertTrue(plan["admission_ready"])
+            self.assertEqual([cleaned_page], plan["jobs"][0]["page_content"])
+            source = root / "section.json"
+            source.write_text(json.dumps(plan["jobs"][0], ensure_ascii=False), encoding="utf-8")
+
+            def fake_convert(_ppt_path, images_dir, **kwargs):
+                path = images_dir / "page-001.png"
+                path.write_bytes(b"fake-image")
+                return [path]
+
+            build_args = argparse.Namespace(ppt=str(ppt), section_json=str(source), out=str(root / "out"), dry_run=True)
+            with patch("build_imagesgallery.resolve_bin", return_value="fake-bin"), patch(
+                "build_imagesgallery.convert_ppt_to_images", side_effect=fake_convert
+            ):
+                stage_a = build_imagesgallery(build_args)
+
+            self.assertEqual(cleaned_page, stage_a["items"][0]["speech"])
+            manifest_path = root / "out" / "1.2 示例" / "imagesgallery" / "imagesgallery.json"
+            preview_path = root / "preview.html"
+            fake_run, fake_preview = _build_fake_audio_pipeline(preview_path, [])
+            args = parse_args(["--manifest", str(manifest_path)])
+            with patch("synthesize_imagesgallery_audio.resolve_bin", side_effect=lambda name: f"fake-{name}"), patch(
+                "synthesize_imagesgallery_audio.run_cmd", side_effect=fake_run
+            ), patch("synthesize_imagesgallery_audio.ffprobe_duration", return_value=1.5), patch(
+                "synthesize_imagesgallery_audio.build_preview_html", side_effect=fake_preview
+            ):
+                build_audio(args)
+            stage_b = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(cleaned_page, stage_b["items"][0]["subtitle"])
+            if MarkdownIt is not None:
+                rendered = MarkdownIt("commonmark").render(stage_b["items"][0]["subtitle"])
+                self.assertIn("<li>第一项\n<ul>\n<li>\n<p>子项</p>\n<ul>", rendered)
+                self.assertIn("第一行<br />\n第二行", rendered)
+                self.assertIn("&lt;strong&gt;保留 &amp;amp;&lt;/strong&gt;", rendered)
+            self.assertEqual(cleaned_page, json.loads(source.read_text(encoding="utf-8"))["page_content"][0])
+            self.assertEqual(original_section_list, section_list.read_bytes())
+
     def test_clean_speech_for_tts_strips_markdown_control_chars(self):
         raw = """## 标题
 

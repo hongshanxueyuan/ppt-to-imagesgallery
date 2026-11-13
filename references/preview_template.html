@@ -225,12 +225,15 @@
       }
     }
 
-    function renderInlineMarkdown(text) {
-      const escaped = String(text || "")
+    function escapeHtml(text) {
+      return String(text || "")
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
-      return escaped
+    }
+
+    function renderInlineMarkdown(text) {
+      return escapeHtml(text)
         .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
         .replace(/(^|[\\s(])\*(.+?)\*(?=[\\s),.!?;:，。！？；：]|$)/g, "$1<em>$2</em>");
     }
@@ -238,55 +241,116 @@
     function renderMarkdown(text) {
       const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
       const html = [];
-      let inList = false;
+      const lists = [];
       let paragraph = [];
+      let fence = null;
+      let code = [];
+      let indentedCode = false;
 
       function flushParagraph() {
         if (!paragraph.length) return;
-        html.push(`<p>${renderInlineMarkdown(paragraph.join("<br>"))}</p>`);
+        html.push(`<p>${paragraph.map(renderInlineMarkdown).join("<br>")}</p>`);
         paragraph = [];
       }
 
-      function closeList() {
-        if (!inList) return;
-        html.push("</ul>");
-        inList = false;
+      function closeListLevel() {
+        const list = lists.pop();
+        html.push(`</li></${list.type}>`);
       }
 
-      for (const rawLine of lines) {
+      function closeLists() {
+        while (lists.length) closeListLevel();
+      }
+
+      function flushCode() {
+        html.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+        code = [];
+      }
+
+      for (let index = 0; index < lines.length; index++) {
+        const rawLine = lines[index];
         const line = rawLine.trim();
+        const fenceMatch = rawLine.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+        if (fence) {
+          if (fenceMatch && fenceMatch[1][0] === fence[0] && fenceMatch[1].length >= fence.length && !fenceMatch[2].trim()) {
+            flushCode();
+            fence = null;
+          } else {
+            code.push(rawLine);
+          }
+          continue;
+        }
+        const isIndented = /^(?: {4}|\t)/.test(rawLine);
+        if (indentedCode && !line) {
+          code.push("");
+          continue;
+        }
+        if (isIndented && !lists.length && (indentedCode || index === 0 || !lines[index - 1].trim())) {
+          flushParagraph();
+          indentedCode = true;
+          code.push(rawLine.replace(/^(?: {4}|\t)/, ""));
+          continue;
+        }
+        if (indentedCode) {
+          while (code.length && !code[code.length - 1]) code.pop();
+          flushCode();
+          indentedCode = false;
+        }
+        if (fenceMatch) {
+          flushParagraph();
+          closeLists();
+          fence = fenceMatch[1];
+          continue;
+        }
         if (!line) {
           flushParagraph();
-          closeList();
+          const next = lines.slice(index + 1).find(candidate => candidate.trim());
+          const nextItem = next && next.match(/^([ \t]*)(?:[-+*]|\d+[.)])\s+/);
+          const nextIndent = nextItem && nextItem[1].replace(/\t/g, "    ").length;
+          if (!nextItem || !lists.length || nextIndent < lists[0].indent) closeLists();
           continue;
         }
 
         const heading = line.match(/^(#{1,6})\s+(.+)$/);
         if (heading) {
           flushParagraph();
-          closeList();
+          closeLists();
           const level = Math.min(6, heading[1].length);
           html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
           continue;
         }
 
-        const listItem = line.match(/^[-*]\s+(.+)$/);
+        const listItem = rawLine.match(/^([ \t]*)([-+*]|\d+[.)])\s+(.+)$/);
         if (listItem) {
           flushParagraph();
-          if (!inList) {
-            html.push("<ul>");
-            inList = true;
+          const indent = listItem[1].replace(/\t/g, "    ").length;
+          const type = /^\d/.test(listItem[2]) ? "ol" : "ul";
+          while (lists.length && indent < lists[lists.length - 1].indent) closeListLevel();
+          if (lists.length && indent === lists[lists.length - 1].indent && type !== lists[lists.length - 1].type) {
+            closeListLevel();
           }
-          html.push(`<li>${renderInlineMarkdown(listItem[1])}</li>`);
+          if (!lists.length || indent > lists[lists.length - 1].indent) {
+            const start = type === "ol" ? Number.parseInt(listItem[2], 10) : 1;
+            html.push(start === 1 ? `<${type}>` : `<ol start="${start}">`);
+            lists.push({indent, type});
+          } else {
+            html.push("</li>");
+          }
+          html.push(`<li>${renderInlineMarkdown(listItem[3])}`);
           continue;
         }
 
-        closeList();
+        closeLists();
         paragraph.push(line);
       }
 
       flushParagraph();
-      closeList();
+      closeLists();
+      if (fence) flushCode();
+      if (indentedCode) {
+        while (code.length && !code[code.length - 1]) code.pop();
+        flushCode();
+      }
       return html.join("");
     }
 
