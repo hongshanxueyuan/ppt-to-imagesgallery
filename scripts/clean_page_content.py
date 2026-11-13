@@ -58,13 +58,17 @@ INLINE_CODE_RE = re.compile(r"(?<!\\)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
 LIST_ITEM_RE = re.compile(r"^([ \t]*)(?:[-+*]|\d+[.)])([ \t]+)")
 
 
-def _protect_markdown_code(text: str) -> tuple[str, dict[str, str]]:
+def _decode_entities(text: str) -> str:
     decoded = text
     while True:
         next_decoded = unescape(decoded)
         if next_decoded == decoded:
-            break
+            return decoded
         decoded = next_decoded
+
+
+def _protect_markdown_code(text: str) -> tuple[str, dict[str, str]]:
+    decoded = _decode_entities(text)
     # The sentinel must remain absent even after entity decoding and HTML tag removal.
     used = set(decoded)
     sentinel = next(chr(value) for value in range(0xE000, 0x110000) if chr(value) not in used)
@@ -85,11 +89,12 @@ def _protect_markdown_code(text: str) -> tuple[str, dict[str, str]]:
         list_item = LIST_ITEM_RE.match(line)
         indent = len(line) - len(line.lstrip(" ")) if not line.startswith("\t") else 4
         code_indent = lists[-1][1] + 4 if lists else 4
+        html_line = re.match(r"^[ \t]*(?:</?[A-Za-z][\w:.-]*(?:\s|/?>)|<!--)", _decode_entities(line))
         if fence is not None:
             lines.append(protect(line))
             if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) and not line[marker.end():].strip():
                 fence = None
-        elif indent >= code_indent and (indented_code or previous_blank):
+        elif not html_line and indent >= code_indent and (indented_code or previous_blank):
             indented_code = True
             lines.append(protect(line))
         elif marker:
@@ -154,11 +159,7 @@ class _VisibleTextParser(HTMLParser):
 def clean_page_content(text: str) -> str:
     """Decode HTML, remove markup, and strip line-leading blockquote prefixes."""
     decoded, protected = _protect_markdown_code(text)
-    while True:
-        next_decoded = unescape(decoded)
-        if next_decoded == decoded:
-            break
-        decoded = next_decoded
+    decoded = _decode_entities(decoded)
 
     parser = _VisibleTextParser()
     parser.feed(decoded)
@@ -181,6 +182,8 @@ def clean_page_content(text: str) -> str:
             elif marker[0] == fence[0] and len(marker) >= len(fence):
                 fence = None
             lines.append(line)
+        elif not line.strip():
+            lines.append("")
         elif fence is not None or line.startswith(("    ", "\t")):
             lines.append(line)
         elif line.strip():
@@ -188,8 +191,6 @@ def clean_page_content(text: str) -> str:
             leading, body, trailing = match.groups()
             # Two or more trailing spaces are a Markdown hard line break.
             lines.append(leading + HORIZONTAL_WHITESPACE_RE.sub(" ", body) + ("  " if len(trailing) >= 2 else ""))
-        else:
-            lines.append("")
     result = "\n".join(lines).strip("\n")
     for token, original in protected.items():
         result = result.replace(token, original)

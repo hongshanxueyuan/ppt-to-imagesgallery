@@ -233,9 +233,23 @@
     }
 
     function renderInlineMarkdown(text) {
-      return escapeHtml(text)
+      const original = String(text || "");
+      let sentinel = "\uE000";
+      while (original.includes(sentinel)) sentinel += "\uE000";
+      const protectedSpans = [];
+      const input = original.replace(/\\([\\`*_{}\[\]()#+\-.!>])|(`+)([\s\S]*?)\2(?!`)/g,
+        (match, escaped, fence, code) => {
+          const token = `${sentinel}${protectedSpans.length}${sentinel}`;
+          protectedSpans.push(escaped === undefined ? `<code>${escapeHtml(code)}</code>` : escapeHtml(escaped));
+          return token;
+        });
+      let rendered = escapeHtml(input)
         .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/(^|[\\s(])\*(.+?)\*(?=[\\s),.!?;:，。！？；：]|$)/g, "$1<em>$2</em>");
+        .replace(/(^|[\s(])\*(.+?)\*(?=[\s),.!?;:，。！？；：]|$)/g, "$1<em>$2</em>");
+      protectedSpans.forEach((value, index) => {
+        rendered = rendered.replace(`${sentinel}${index}${sentinel}`, value);
+      });
+      return rendered;
     }
 
     function renderMarkdown(text) {
@@ -307,7 +321,10 @@
           const next = lines.slice(index + 1).find(candidate => candidate.trim());
           const nextItem = next && next.match(/^([ \t]*)(?:[-+*]|\d+[.)])\s+/);
           const nextIndent = nextItem && nextItem[1].replace(/\t/g, "    ").length;
-          if (!nextItem || !lists.length || nextIndent < lists[0].indent) closeLists();
+          const nextContentIndent = next && (next.match(/^[ \t]*/) || [""])[0].replace(/\t/g, "    ").length;
+          const continuation = lists.length && next && !nextItem && nextContentIndent >= lists[lists.length - 1].contentIndent;
+          if (continuation) html.push("<br>");
+          else if (!nextItem || !lists.length || nextIndent < lists[0].indent) closeLists();
           continue;
         }
 
@@ -320,10 +337,11 @@
           continue;
         }
 
-        const listItem = rawLine.match(/^([ \t]*)([-+*]|\d+[.)])\s+(.+)$/);
+        const listItem = rawLine.match(/^([ \t]*)([-+*]|\d+[.)])([ \t]+)(.+)$/);
         if (listItem) {
           flushParagraph();
           const indent = listItem[1].replace(/\t/g, "    ").length;
+          const contentIndent = indent + listItem[2].length + listItem[3].replace(/\t/g, "    ").length;
           const type = /^\d/.test(listItem[2]) ? "ol" : "ul";
           while (lists.length && indent < lists[lists.length - 1].indent) closeListLevel();
           if (lists.length && indent === lists[lists.length - 1].indent && type !== lists[lists.length - 1].type) {
@@ -332,14 +350,20 @@
           if (!lists.length || indent > lists[lists.length - 1].indent) {
             const start = type === "ol" ? Number.parseInt(listItem[2], 10) : 1;
             html.push(start === 1 ? `<${type}>` : `<ol start="${start}">`);
-            lists.push({indent, type});
+            lists.push({indent, type, contentIndent});
           } else {
             html.push("</li>");
+            lists[lists.length - 1].contentIndent = contentIndent;
           }
-          html.push(`<li>${renderInlineMarkdown(listItem[3])}`);
+          html.push(`<li>${renderInlineMarkdown(listItem[4])}`);
           continue;
         }
 
+        const contentIndent = (rawLine.match(/^[ \t]*/) || [""])[0].replace(/\t/g, "    ").length;
+        if (lists.length && (contentIndent >= lists[lists.length - 1].contentIndent || (index > 0 && lines[index - 1].trim()))) {
+          html.push(`<br>${renderInlineMarkdown(line)}`);
+          continue;
+        }
         closeLists();
         paragraph.push(line);
       }

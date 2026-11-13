@@ -67,6 +67,58 @@ def _build_fake_audio_pipeline(preview_path: Path, synth_commands: list[list[str
 
 
 class TestSynthesizeImagesGalleryAudio(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is needed to execute the generated preview')
+    def test_preview_keeps_ordered_item_continuation_in_the_same_list(self):
+        page = '1. 第一项\n   补充说明\n2. 第二项\n   更多说明\n\n结束。 `**代码**` 和 \\*\\*转义\\*\\*。'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            preview = build_preview_html({
+                'source_ppt': 'sample.pptx', 'audio': {'full_audio': 'audio.mp3'},
+                'items': [{'page': 1, 'subtitle': page, 'start': 0, 'end': 1000}],
+            }, root / 'imagesgallery.json')
+            runner = r'''
+const fs = require("fs"), vm = require("vm");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const payload = html.match(/<script id="payload" type="application\/json">([\s\S]*?)<\/script>/)[1];
+const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
+const nodes = {};
+function element() { return {innerHTML:"", textContent:"", classList:{toggle(){}}, addEventListener(){}, appendChild(){}}; }
+global.document = {getElementById(id) { return nodes[id] ||= element(); }, createElement() { return element(); }};
+nodes.payload = {textContent: payload};
+vm.runInThisContext(script);
+process.stdout.write(nodes.subtitleText.innerHTML);
+'''
+            result = subprocess.run([shutil.which('node'), '-e', runner, str(preview)],
+                                    capture_output=True, text=True, encoding='utf8', check=True)
+        self.assertEqual('<ol><li>第一项<br>补充说明</li><li>第二项<br>更多说明</li></ol>'
+                         '<p>结束。 <code>**代码**</code> 和 **转义**。</p>', result.stdout)
+
+    def test_html_blocks_are_cleaned_but_fenced_html_code_is_preserved(self):
+        page = ('<div>\n    <p>第一段</p>\n\n    <script>不该读的脚本</script>\n'
+                '    <p>第二段</p>\n</div>\n\n    &amp;lt;script&amp;gt;编码脚本&amp;lt;/script&amp;gt;'
+                '\n\n```html\n<script>示例代码</script>\n```')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ppt = root / '1.2 示例.pptx'
+            ppt.write_bytes(b'fake-ppt')
+            section_list = root / 'section-list.json'
+            section_list.write_text(json.dumps({'sections': [{
+                'section_id': '1.2', 'section_title': '1.2 示例', 'output_name': ppt.name,
+                'page_count': 1, 'page_content': [page],
+            }]}, ensure_ascii=False), encoding='utf8')
+            with patch('plan_batch_jobs.count_presentation_pages', return_value=1):
+                plan = discover_batch_jobs(root)
+            self.assertTrue(plan['admission_ready'])
+            cleaned = plan['jobs'][0]['page_content'][0]
+            self.assertIn('第一段', cleaned)
+            self.assertIn('第二段', cleaned)
+            self.assertNotIn('<p>', cleaned)
+            self.assertNotIn('<div>', cleaned)
+            self.assertNotIn('不该读的脚本', cleaned)
+            self.assertNotIn('编码脚本', cleaned)
+            self.assertIn('```html\n<script>示例代码</script>\n```', cleaned)
+            self.assertTrue(all(line == '' for line in cleaned.splitlines() if not line.strip()))
+
     @unittest.skipUnless(shutil.which("node"), "Node.js is needed to execute the generated preview")
     def test_generated_preview_renders_ordered_and_nested_lists_and_hard_breaks(self):
         page = ("# 指南\n\n1. 项目一\n   - 子项\n\n   - 子项二\n     - 子子项\n"
