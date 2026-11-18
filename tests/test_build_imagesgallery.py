@@ -653,7 +653,9 @@ class TestBuildImagesGallery(unittest.TestCase):
 
     def test_skill_doc_teaches_batch_only_section_list_workflow(self):
         skill_doc = (SCRIPT_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("disable-model-invocation: true", skill_doc)
+        self.assertNotIn("disable-model-invocation: true", skill_doc)
+        self.assertIn("单个 Gallery 素材修复", skill_doc)
+        self.assertIn("repair_imagesgallery_materials.py", skill_doc)
         self.assertIn("section-list.json", skill_doc)
         self.assertIn("preflight", skill_doc)
         self.assertIn("本地 `.ppt` / `.pptx`", skill_doc)
