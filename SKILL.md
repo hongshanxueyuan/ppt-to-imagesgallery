@@ -1,7 +1,6 @@
 ---
 name: ppt-to-imagesgallery
-description: 处理本地 NLM 工作目录里的 PPT 子集，按 `section-list.json` 生成 imagesgallery 产物。
-disable-model-invocation: true
+description: 处理本地 NLM 工作目录里的 PPT 子集，按 `section-list.json` 生成 imagesgallery 产物；也可在发布 skill 请求时修复单个 Gallery 的缺失本地素材。
 ---
 
 # PPT To ImagesGallery
@@ -20,6 +19,23 @@ disable-model-invocation: true
 - 推送到 Studio 必须切换到 `studio-imagegallery-publish`。
 - 不要把浏览器自动化当成 Studio 推送兜底。
 - 压缩页图使用 Pillow；如果当前 Python 环境缺少 Pillow，先运行 `python -m pip install -r requirements.txt`。
+
+## 单个 Gallery 素材修复
+
+仅当 `studio-imagegallery-publish` 为一个已选定的小节请求补齐缺失本地素材时，使用这个 targeted repair path。它不运行 batch planner，也不把其他 deck 加入处理范围；发布和 Studio 复核仍由发布 skill 完成。
+
+```bash
+python scripts/repair_imagesgallery_materials.py \
+  --manifest <existing-imagesgallery.json> \
+  --ppt <matching-deck.pptx> \
+  --section-json <uniquely-resolved-section.json>
+```
+
+- `--manifest` 必填。图片缺失时，`--ppt` 和 `--section-json` 必须一起提供；CLI 只在临时目录运行单 deck builder，再复制缺失页图并更新对应图片引用，保留已有 Stage-B 音频、字幕、时间轴和其他字段。
+- 仅缺字幕文本时可单独传 `--section-json`；若 manifest 已有字幕但缺时间轴或音频，则不需要 PPT 或 section JSON。
+- `--audio-search-root` 可选；省略时只搜索 Gallery 包目录。音频路径失效时，按原文件名查找本地音频：唯一匹配只修正 `audio.full_audio`；字幕和时间轴完整时不调用 TTS。多个匹配会停止并报告歧义，不猜路径。
+- 没有本地完整音频匹配且确需补音频或时间轴时，修复命令会重跑音频阶段并复用已有分段 MP3（`--skip-existing`）；缺失字幕会先从已解析 section JSON 补齐。请求该局部修复即授权执行所需音频阶段，不要再询问默认 TTS 费用。
+- 缺少唯一来源、section id 不匹配或页数不一致时停止，保留当前 Gallery 并报告未修复。
 
 ## BL 前置检查
 
