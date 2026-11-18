@@ -89,12 +89,26 @@ def _load_section_for_manifest(section_json_path: Path, manifest: Mapping[str, A
             f"section JSON page_count {section['page_count']} does not match gallery page count {page_count}"
         )
 
-    manifest_section_id = str(manifest.get("section_id", "")).strip()
-    source_section_id = str(section.get("section_id", "")).strip()
-    if manifest_section_id and source_section_id and manifest_section_id != source_section_id:
+    manifest_section_id = manifest.get("section_id")
+    source_section_id = section.get("section_id")
+    manifest_section_id = manifest_section_id.strip() if isinstance(manifest_section_id, str) else ""
+    source_section_id = source_section_id.strip() if isinstance(source_section_id, str) else ""
+    if manifest_section_id and source_section_id:
+        if manifest_section_id != source_section_id:
+            raise ValueError(
+                "section JSON does not match manifest.section_id: "
+                f"{source_section_id!r} != {manifest_section_id!r}"
+            )
+        return section
+
+    manifest_section_title = manifest.get("section_title")
+    source_section_title = section.get("section_title")
+    manifest_section_title = manifest_section_title.strip() if isinstance(manifest_section_title, str) else ""
+    source_section_title = source_section_title.strip() if isinstance(source_section_title, str) else ""
+    if not manifest_section_title or not source_section_title or manifest_section_title != source_section_title:
         raise ValueError(
-            "section JSON does not match manifest.section_id: "
-            f"{source_section_id!r} != {manifest_section_id!r}"
+            "section identity cannot be verified: section_id is unavailable and section_title does not uniquely match "
+            f"({manifest_section_title!r} != {source_section_title!r})"
         )
     return section
 
@@ -187,19 +201,19 @@ def _find_audio_candidates(search_root: Path, basename: str) -> List[Path]:
     return sorted(candidates.values(), key=lambda path: str(path).casefold())
 
 
-def _audio_output_name(reference: str) -> str:
+def _validated_output_name(reference: str, suffix: str, fallback: str) -> str:
     basename = _audio_basename(reference)
-    if basename and Path(basename).suffix.lower() == ".mp3" and Path(basename).name == basename:
+    if basename and Path(basename).suffix.lower() == suffix and Path(basename).name == basename:
         return basename
-    return "full_speech.mp3"
+    return fallback
+
+
+def _audio_output_name(reference: str) -> str:
+    return _validated_output_name(reference, ".mp3", "full_speech.mp3")
 
 
 def _timeline_output_name(reference: str) -> str:
-    raw = reference.strip()
-    basename = _audio_basename(raw) if raw else "speech_timestamps.json"
-    if basename and Path(basename).suffix.lower() == ".json" and Path(basename).name == basename:
-        return basename
-    return "speech_timestamps.json"
+    return _validated_output_name(reference, ".json", "speech_timestamps.json")
 
 
 def _run_audio_stage(manifest_path: Path, audio: Mapping[str, Any]) -> Dict[str, Any]:

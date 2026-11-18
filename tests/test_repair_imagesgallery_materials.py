@@ -2,6 +2,8 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -204,6 +206,105 @@ class TestRepairImagesGalleryMaterials(unittest.TestCase):
         self.assertEqual(0, saved["items"][0]["start"])
         self.assertEqual(1200, saved["items"][0]["end"])
         self.assertEqual("images/page-002.png", saved["items"][1]["image"])
+
+    def test_image_repair_requires_source_identity_and_prefers_matching_section_id(self):
+        cases = (
+            ("different_title_without_ids", None, None, "1.2 示例", "1.2 不同小节", 1),
+            ("matching_title_without_ids", None, None, "1.2 示例", "1.2 示例", 0),
+            ("matching_id_takes_precedence", "1.2", "1.2", "1.2 示例", "1.2 已改名", 0),
+        )
+        for case, manifest_section_id, source_section_id, manifest_title, section_title, expected_exit_code in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                gallery_dir = root / "gallery" / "imagesgallery"
+                manifest_path = gallery_dir / "imagesgallery.json"
+                audio_path = gallery_dir / "audio" / "full_speech.mp3"
+                audio_path.parent.mkdir(parents=True, exist_ok=True)
+                audio_path.write_bytes(b"existing-full-audio")
+                existing_image = gallery_dir / "images" / "page-002.png"
+                existing_image.parent.mkdir(parents=True, exist_ok=True)
+                existing_image.write_bytes(b"existing-page-two")
+                manifest = _write_stage_b_manifest(
+                    manifest_path,
+                    section_id=manifest_section_id or "1.2",
+                    section_title=manifest_title,
+                    audio={"full_audio": str(audio_path)},
+                )
+                if manifest_section_id is None:
+                    manifest.pop("section_id")
+                manifest["items"][0]["image"] = "images/missing-page-001.png"
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+                original_manifest = manifest_path.read_bytes()
+
+                ppt_path = root / "sample.pptx"
+                ppt_path.write_bytes(b"source-ppt")
+                section_json_path = root / "section.json"
+                section_payload = {
+                    "section_title": section_title,
+                    "page_count": 2,
+                    "page_content": ["第一页原文", "第二页原文"],
+                }
+                if source_section_id is not None:
+                    section_payload["section_id"] = source_section_id
+                section_json_path.write_text(json.dumps(section_payload, ensure_ascii=False), encoding="utf-8")
+
+                def fake_build_imagesgallery(args):
+                    staging_gallery = Path(args.out) / "sample" / "imagesgallery"
+                    first_image = staging_gallery / "images" / "regenerated-page-001.png"
+                    second_image = staging_gallery / "images" / "unused-page-002.png"
+                    first_image.parent.mkdir(parents=True, exist_ok=True)
+                    first_image.write_bytes(b"regenerated-page-one")
+                    second_image.write_bytes(b"regenerated-page-two")
+                    staged_manifest = {
+                        "section_title": section_title,
+                        "items": [
+                            {"page_number": 1, "image": "images/regenerated-page-001.png"},
+                            {"page_number": 2, "image": "images/unused-page-002.png"},
+                        ],
+                    }
+                    if source_section_id is not None:
+                        staged_manifest["section_id"] = source_section_id
+                    (staging_gallery / "imagesgallery.json").write_text(
+                        json.dumps(staged_manifest, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+
+                stderr = StringIO()
+                with patch(
+                    "repair_imagesgallery_materials.build_imagesgallery",
+                    side_effect=fake_build_imagesgallery,
+                ) as build_images, patch("repair_imagesgallery_materials.build_audio_stage") as build_audio:
+                    with redirect_stderr(stderr):
+                        exit_code = main(
+                            [
+                                "--manifest",
+                                str(manifest_path),
+                                "--ppt",
+                                str(ppt_path),
+                                "--section-json",
+                                str(section_json_path),
+                            ]
+                        )
+
+                saved_bytes = manifest_path.read_bytes()
+                if expected_exit_code == 0:
+                    saved = json.loads(saved_bytes)
+                    repaired_image = gallery_dir / saved["items"][0]["image"]
+                    repaired_image_bytes = repaired_image.read_bytes()
+                else:
+                    repaired_image_bytes = None
+
+            self.assertEqual(expected_exit_code, exit_code)
+            self.assertEqual(0, build_audio.call_count)
+            if expected_exit_code:
+                self.assertEqual(0, build_images.call_count)
+                self.assertEqual(original_manifest, saved_bytes)
+                self.assertIn("section_title", stderr.getvalue())
+            else:
+                self.assertEqual(1, build_images.call_count)
+                self.assertEqual(b"regenerated-page-one", repaired_image_bytes)
+                self.assertEqual("第一页字幕", saved["items"][0]["subtitle"])
+                self.assertEqual(0, saved["items"][0]["start"])
 
     def test_missing_audio_rebuilds_using_existing_segments_and_stubbed_commands(self):
         with tempfile.TemporaryDirectory() as tmp:
